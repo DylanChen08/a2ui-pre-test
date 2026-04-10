@@ -1,0 +1,18 @@
+{
+  "name": "a2ui-pre-test",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "web/*",
+    "server/*"
+  ],
+  "scripts": {
+    "dev:web": "npm -w web/a2ui-playground run dev",
+    "dev:server": "npm -w server/a2ui-playground-server run dev",
+    "dev": "npm run dev:server & npm run dev:web",
+    "build": "npm --workspaces run build",
+    "typecheck": "npm --workspaces run typecheck",
+    "lint": "npm --workspaces run lint"
+  }
+}
+
