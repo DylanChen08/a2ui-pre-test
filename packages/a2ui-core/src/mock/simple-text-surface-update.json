@@ -1,0 +1,27 @@
+{
+  "surfaceUpdate": {
+    "surfaceId": "test-surface-1",
+    "components": [
+      {
+        "id": "root-component",
+        "component": {
+          "Column": {
+            "children": ["text-component"]
+          }
+        }
+      },
+      {
+        "id": "text-component",
+        "component": {
+          "Text": {
+            "value": "Hello, A2UI!",
+            "style": {
+              "fontSize": "16px",
+              "color": "#333333"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

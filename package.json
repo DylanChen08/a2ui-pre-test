@@ -7,7 +7,7 @@
     "server/*"
   ],
   "scripts": {
-    "dev:web": "npm -w web/a2ui-playground run dev",
+    "dev:web": "npm -w packages/a2ui-react run dev",
     "dev:server": "npm -w server/a2ui-playground-server run dev",
     "dev": "npm run dev:server & npm run dev:web",
     "build": "npm --workspaces run build",

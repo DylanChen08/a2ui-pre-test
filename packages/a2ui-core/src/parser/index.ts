@@ -1,8 +1,347 @@
-export type A2UIProtocol = unknown;
+import {
+  createA2uiStore,
+  A2uiStore,
+  HydrateNode,
+  Surface,
+  Error as A2UIError,
+  ErrorType,
+} from "../store/index";
+import { StoreApi } from "zustand/vanilla";
+import {
+  buildComponentTrees,
+  type ComponentTreeNode,
+} from "../treebuilder/index";
 
-export function parseA2UIProtocol(input: string): A2UIProtocol {
-  void input;
-  // 架构占位：后续根据协议定义实现解析
-  return {};
+export type { RenderFunction, RenderMap } from "../store/index";
+
+export interface Component {
+  id: string;
+  weight?: number;
+  component: Record<string, any>;
 }
+
+export interface SurfaceUpdate {
+  surfaceId: string;
+  components: Component[];
+}
+
+export interface BeginRendering {
+  surfaceId: string;
+  catalogId?: string;
+  root: string;
+  styles?: Record<string, any>;
+}
+
+export interface DataModelUpdate {
+  surfaceId: string;
+  path?: string;
+  contents: Array<{
+    key: string;
+    valueString?: string;
+    valueNumber?: number;
+    valueBoolean?: boolean;
+    valueMap?: Array<{
+      key: string;
+      valueString?: string;
+      valueNumber?: number;
+      valueBoolean?: boolean;
+    }>;
+  }>;
+}
+
+export interface DeleteSurface {
+  surfaceId: string;
+}
+
+export interface A2UIProtocol {
+  beginRendering?: BeginRendering;
+  surfaceUpdate?: SurfaceUpdate;
+  dataModelUpdate?: DataModelUpdate;
+  deleteSurface?: DeleteSurface;
+}
+
+export type A2UIMessage = A2UIProtocol;
+
+export type PassJSONLResult = {
+  messages: A2UIMessage[];
+  componentTrees: ComponentTreeNode[];
+};
+
+interface ParserResult {
+  surface?: Surface;
+  hydrateNodes?: HydrateNode[];
+  dataModelUpdate?: DataModelUpdate;
+  deleteSurface?: DeleteSurface;
+}
+
+class A2UIParser {
+  private store: StoreApi<any>;
+  
+  constructor() {
+    this.store = createA2uiStore();
+  }
+  
+  setStore(store: StoreApi<any>) {
+    this.store = store;
+  }
+  
+  resetRuntimeState() {
+    // 重置运行时状态
+  }
+  
+  parseMessage(message: A2UIMessage): ParserResult {
+    if (message.beginRendering) {
+      return this.parseBeginRendering(message.beginRendering);
+    } else if (message.surfaceUpdate) {
+      return this.parseSurfaceUpdate(message.surfaceUpdate);
+    } else if (message.dataModelUpdate) {
+      return this.parseDataModelUpdate(message.dataModelUpdate);
+    } else if (message.deleteSurface) {
+      return this.parseDeleteSurface(message.deleteSurface);
+    } else {
+      throw new Error('Invalid A2UI message: no action specified');
+    }
+  }
+  
+  parseBeginRendering(beginRendering: BeginRendering): ParserResult {
+    const { surfaceId, root } = beginRendering;
+    
+    // 检查hydrateNodeMap中是否已经存在该node
+    let rootNode = this.store.getState().getHydrateNode(root);
+    
+    // 如果不存在，创建一个新的rootNode
+    if (!rootNode) {
+      rootNode = {
+        componentId: root,
+        _vnode: null,
+        ownerSurfaceId: surfaceId,
+        protocal: JSON.stringify(beginRendering)
+      };
+      // 添加到store
+      this.store.getState().addHydrateNode(rootNode);
+    }
+    
+    // 创建surface，rootNode直接指向hydrateNodeMap中的node
+    const surface: Surface = {
+      surfaceId,
+      beginrender: true,
+      rootNode
+    };
+    
+    // 添加到store
+    this.store.getState().addSurface(surface);
+    
+    return { surface };
+  }
+  
+  parseSurfaceUpdate(surfaceUpdate: SurfaceUpdate): ParserResult {
+    const { surfaceId, components } = surfaceUpdate;
+    
+    const hydrateNodes: HydrateNode[] = [];
+    
+    // 处理每个组件
+    for (const component of components) {
+      const { id, component: componentData } = component;
+      
+      // 渲染组件
+      const _vnode = this.renderComponent(id, componentData);
+      
+      // 创建hydrateNode
+      const hydrateNode: HydrateNode = {
+        componentId: id,
+        _vnode,
+        ownerSurfaceId: surfaceId,
+        protocal: JSON.stringify(component)
+      };
+      
+      // 添加到store
+      this.store.getState().addHydrateNode(hydrateNode);
+      hydrateNodes.push(hydrateNode);
+    }
+    
+    // 检查是否已经存在surface
+    let surface = this.store.getState().getSurface(surfaceId);
+    if (!surface && components.length > 0) {
+      // 获取第一个组件的id
+      const rootComponentId = components[0].id;
+      // 从hydrateNodeMap中获取对应的node
+      const rootNode = this.store.getState().getHydrateNode(rootComponentId);
+      if (rootNode) {
+        // 创建新的surface，rootNode直接指向hydrateNodeMap中的node
+        surface = {
+          surfaceId,
+          beginrender: false,
+          rootNode
+        };
+        this.store.getState().addSurface(surface);
+      }
+    }
+    
+    return { surface, hydrateNodes };
+  }
+  
+  parseDataModelUpdate(dataModelUpdate: DataModelUpdate): ParserResult {
+    const { surfaceId, path, contents } = dataModelUpdate;
+    
+    // 处理数据模型更新
+    for (const content of contents) {
+      const { key, valueString, valueNumber, valueBoolean, valueMap } = content;
+      let value;
+      
+      if (valueString !== undefined) {
+        value = valueString;
+      } else if (valueNumber !== undefined) {
+        value = valueNumber;
+      } else if (valueBoolean !== undefined) {
+        value = valueBoolean;
+      } else if (valueMap !== undefined) {
+        value = valueMap;
+      }
+      
+      if (value !== undefined) {
+        // 简单的路径处理
+        const updatePath = path ? `${path}/${key}` : key;
+        this.store.getState().updateDataModel(surfaceId, updatePath, value);
+      }
+    }
+    
+    return { dataModelUpdate };
+  }
+  
+  parseDeleteSurface(deleteSurface: DeleteSurface): ParserResult {
+    const { surfaceId } = deleteSurface;
+    
+    // 获取store中的hydrateNodeMap
+    const hydrateNodeMap = this.store.getState().hydrateNodeMap;
+    
+    // 找出该surface下的所有hydrateNode
+    const nodesToDelete = Object.values(hydrateNodeMap).filter((node): node is HydrateNode => {
+      return (node as HydrateNode).ownerSurfaceId === surfaceId;
+    });
+    
+    // 删除这些hydrateNode
+    for (const node of nodesToDelete) {
+      this.store.getState().removeHydrateNode(node.componentId);
+    }
+    
+    // 从store中移除surface
+    this.store.getState().removeSurface(surfaceId);
+    
+    return { deleteSurface };
+  }
+  
+  renderComponent(componentId: string, componentData: Record<string, any>): any {
+    const renderMap = this.store.getState().renderMap;
+    
+    // 获取组件类型
+    const componentType = Object.keys(componentData)[0];
+    if (!componentType) {
+      return null;
+    }
+    
+    // 检查renderMap中是否有对应的渲染函数
+    const renderFunction = renderMap[componentType];
+    if (renderFunction) {
+      // 使用渲染函数渲染组件
+      const props = { ...componentData[componentType], id: componentId };
+      const vnode = renderFunction(props);
+      
+      // 更新hydrateNode的_vnode属性
+      const hydrateNode = this.store.getState().getHydrateNode(componentId);
+      if (hydrateNode) {
+        this.store.getState().updateHydrateNode(componentId, { ...hydrateNode, _vnode: vnode });
+      }
+      
+      return vnode;
+    } else {
+      // 如果没有渲染函数，返回null
+      return null;
+    }
+  }
+  
+  parseJSONL(jsonl: string): A2UIMessage[] {
+    try {
+      // 分割JSONL格式的输入，每行一个JSON对象
+      const lines = jsonl.trim().split('\n');
+      const messages: A2UIMessage[] = [];
+      
+      // 解析每一行JSON
+      for (const line of lines) {
+        if (line.trim()) {
+          const parsed = JSON.parse(line);
+          messages.push(parsed as A2UIMessage);
+        }
+      }
+      
+      return messages;
+    } catch (error) {
+      // 如果解析失败，返回空数组
+      console.error('Failed to parse JSONL:', error);
+      return [];
+    }
+  }
+
+  /**
+   * 解析并依次应用 JSONL 中的每条 A2UI 消息，然后通过 TreeBuilder 生成组件树快照。
+   */
+  passJSONL(jsonl: string): PassJSONLResult {
+    const messages = this.parseJSONL(jsonl);
+    for (const message of messages) {
+      this.parseMessage(message);
+    }
+    const state = this.store.getState() as A2uiStore;
+    const componentTrees = buildComponentTrees(state);
+    return { messages, componentTrees };
+  }
+  
+  stringifyJSONL(messages: A2UIMessage[]): string {
+    try {
+      // 将每个消息转换为JSON字符串，然后用换行符连接
+      const lines = messages.map(message => JSON.stringify(message));
+      return lines.join('\n');
+    } catch (error) {
+      // 如果序列化失败，返回空字符串
+      console.error('Failed to stringify JSONL:', error);
+      return '';
+    }
+  }
+}
+
+export const a2uiParser = new A2UIParser();
+export function parseA2UIProtocol(input: string): A2UIMessage[] {
+  return a2uiParser.parseJSONL(input);
+}
+
+// 处理beginRendering消息
+export function handleBeginRendering(message: A2UIMessage): BeginRendering | null {
+  if (message.beginRendering) {
+    return message.beginRendering;
+  }
+  return null;
+}
+
+// 处理surfaceUpdate消息
+export function handleSurfaceUpdate(message: A2UIMessage): SurfaceUpdate | null {
+  if (message.surfaceUpdate) {
+    return message.surfaceUpdate;
+  }
+  return null;
+}
+
+// 处理dataModelUpdate消息
+export function handleDataModelUpdate(message: A2UIMessage): DataModelUpdate | null {
+  if (message.dataModelUpdate) {
+    return message.dataModelUpdate;
+  }
+  return null;
+}
+
+// 处理deleteSurface消息
+export function handleDeleteSurface(message: A2UIMessage): DeleteSurface | null {
+  if (message.deleteSurface) {
+    return message.deleteSurface;
+  }
+  return null;
+}
+
 
