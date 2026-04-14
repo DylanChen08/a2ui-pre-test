@@ -382,39 +382,6 @@ describe('A2UIParser', () => {
     });
   });
 
-  describe('passJSONL', () => {
-    it('applies JSONL messages and returns component trees from TreeBuilder', () => {
-      const jsonl = [
-        JSON.stringify({
-          beginRendering: { surfaceId: 'surface-001', root: 'text-component' },
-        }),
-        JSON.stringify({
-          surfaceUpdate: {
-            surfaceId: 'surface-001',
-            components: [
-              {
-                id: 'text-component',
-                component: {
-                  Text: {
-                    text: { literalString: 'Hello, A2UI!' },
-                  },
-                },
-              },
-            ],
-          },
-        }),
-      ].join('\n');
-
-      const { messages, componentTrees } = a2uiParser.passJSONL(jsonl);
-
-      expect(messages).to.have.lengthOf(2);
-      expect(componentTrees).to.be.an('array');
-      expect(componentTrees.length).to.be.at.least(1);
-      expect(componentTrees[0].componentId).to.equal('text-component');
-      expect(componentTrees[0].children).to.deep.equal([]);
-    });
-  });
-
   describe('error handling', () => {
     it('should throw error for invalid message', () => {
       const invalidMessage = {} as A2UIMessage;

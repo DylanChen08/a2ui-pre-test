@@ -1,18 +1,12 @@
 import {
   createA2uiStore,
-  A2uiStore,
   HydrateNode,
   Surface,
-  Error as A2UIError,
-  ErrorType,
-} from "../store/index";
-import { StoreApi } from "zustand/vanilla";
-import {
-  buildComponentTrees,
-  type ComponentTreeNode,
-} from "../treebuilder/index";
-
-export type { RenderFunction, RenderMap } from "../store/index";
+  type RenderFunction,
+  type RenderMap,
+} from '../store/index';
+import { StoreApi } from 'zustand/vanilla';
+import { buildComponentTree, type ComponentTree } from '../treebuilder/index';
 
 export interface Component {
   id: string;
@@ -62,16 +56,20 @@ export interface A2UIProtocol {
 
 export type A2UIMessage = A2UIProtocol;
 
-export type PassJSONLResult = {
-  messages: A2UIMessage[];
-  componentTrees: ComponentTreeNode[];
-};
+export type { RenderFunction, RenderMap };
 
 interface ParserResult {
   surface?: Surface;
   hydrateNodes?: HydrateNode[];
   dataModelUpdate?: DataModelUpdate;
   deleteSurface?: DeleteSurface;
+}
+
+export interface ApplyJSONLResult {
+  messages: A2UIMessage[];
+  componentTree: ComponentTree;
+  /** 某行 JSON 解析失败或 parseMessage 抛错时的记录（行号为 JSONL 从 1 起的行号） */
+  parseErrors: Array<{ line: number; message: string }>;
 }
 
 class A2UIParser {
@@ -264,7 +262,7 @@ class A2UIParser {
       // 分割JSONL格式的输入，每行一个JSON对象
       const lines = jsonl.trim().split('\n');
       const messages: A2UIMessage[] = [];
-      
+
       // 解析每一行JSON
       for (const line of lines) {
         if (line.trim()) {
@@ -272,7 +270,7 @@ class A2UIParser {
           messages.push(parsed as A2UIMessage);
         }
       }
-      
+
       return messages;
     } catch (error) {
       // 如果解析失败，返回空数组
@@ -282,16 +280,42 @@ class A2UIParser {
   }
 
   /**
-   * 解析并依次应用 JSONL 中的每条 A2UI 消息，然后通过 TreeBuilder 生成组件树快照。
+   * 按行解析并依次应用 JSONL 中的每条 A2UI 消息，最后通过 TreeBuilder 生成组件树。
    */
-  passJSONL(jsonl: string): PassJSONLResult {
-    const messages = this.parseJSONL(jsonl);
-    for (const message of messages) {
-      this.parseMessage(message);
+  applyJSONL(jsonl: string): ApplyJSONLResult {
+    const parseErrors: ApplyJSONLResult['parseErrors'] = [];
+    const messages: A2UIMessage[] = [];
+    const lines = jsonl.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const line = raw.trim();
+      if (!line) continue;
+
+      let message: A2UIMessage;
+      try {
+        message = JSON.parse(line) as A2UIMessage;
+      } catch (e) {
+        parseErrors.push({
+          line: i + 1,
+          message: e instanceof Error ? e.message : String(e),
+        });
+        continue;
+      }
+
+      messages.push(message);
+      try {
+        this.parseMessage(message);
+      } catch (e) {
+        parseErrors.push({
+          line: i + 1,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
-    const state = this.store.getState() as A2uiStore;
-    const componentTrees = buildComponentTrees(state);
-    return { messages, componentTrees };
+
+    const componentTree = buildComponentTree(this.store.getState());
+    return { messages, componentTree, parseErrors };
   }
   
   stringifyJSONL(messages: A2UIMessage[]): string {

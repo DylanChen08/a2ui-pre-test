@@ -9,7 +9,7 @@
     "noEmit": false,
     "composite": true,
     "module": "ESNext",
-    "moduleResolution": "bundler"
+    "moduleResolution": "node"
   },
   "include": ["src"],
   "exclude": ["src/**/__tests__/*"]

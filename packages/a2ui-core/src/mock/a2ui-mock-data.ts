@@ -1,102 +1,24 @@
-// A2UI协议的mock数据
-
-// 包含一个text组件的简单A2UI协议数据
 export const simpleTextMock = {
   beginRendering: {
-    surfaceId: "test-surface-1",
-    root: "root-component",
-    styles: {
-      backgroundColor: "#ffffff",
-      padding: "20px"
-    }
+    surfaceId: "surface-001",
+    root: "text-component",
   },
   surfaceUpdate: {
-    surfaceId: "test-surface-1",
+    surfaceId: "surface-001",
     components: [
-      {
-        id: "root-component",
-        component: {
-          Column: {
-            children: ["text-component"]
-          }
-        }
-      },
       {
         id: "text-component",
         component: {
           Text: {
-            value: "Hello, A2UI!",
-            style: {
-              fontSize: "16px",
-              color: "#333333"
-            }
-          }
-        }
-      }
-    ]
-  }
+            text: {
+              literalString: "Hello, A2UI!",
+            },
+          },
+        },
+      },
+    ],
+  },
 };
 
-// 包含多个text组件的A2UI协议数据
-export const multipleTextMock = {
-  beginRendering: {
-    surfaceId: "test-surface-2",
-    root: "root-component",
-    styles: {
-      backgroundColor: "#f5f5f5",
-      padding: "20px"
-    }
-  },
-  surfaceUpdate: {
-    surfaceId: "test-surface-2",
-    components: [
-      {
-        id: "root-component",
-        component: {
-          Column: {
-            children: ["title-component", "subtitle-component", "body-component"]
-          }
-        }
-      },
-      {
-        id: "title-component",
-        component: {
-          Text: {
-            value: "Welcome to A2UI",
-            style: {
-              fontSize: "24px",
-              fontWeight: "bold",
-              color: "#000000"
-            }
-          }
-        }
-      },
-      {
-        id: "subtitle-component",
-        component: {
-          Text: {
-            value: "A powerful UI framework",
-            style: {
-              fontSize: "18px",
-              color: "#666666",
-              marginTop: "8px"
-            }
-          }
-        }
-      },
-      {
-        id: "body-component",
-        component: {
-          Text: {
-            value: "A2UI allows you to create dynamic user interfaces with ease.",
-            style: {
-              fontSize: "14px",
-              color: "#333333",
-              marginTop: "16px"
-            }
-          }
-        }
-      }
-    ]
-  }
-};
+// 占位：后续补充更复杂的多节点 mock
+export const multipleTextMock = simpleTextMock;

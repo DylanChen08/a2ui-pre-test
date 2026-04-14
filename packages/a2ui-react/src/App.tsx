@@ -1,11 +1,12 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 // 导入真实的init方法和相关功能
 import {
   init,
   a2uiParser,
-  simpleTextMock,
-  type ComponentTreeNode,
+  buildComponentTree,
+  type ComponentTree,
 } from "a2ui-core";
+import simpleTextProtocol from "../../a2ui-core/src/mock/simple-text.json";
 
 export function App() {
   const [store, setStore] = useState<any>(null);
@@ -18,12 +19,31 @@ export function App() {
   const [showStoreModal, setShowStoreModal] = useState<boolean>(false);
   const [showErrorsModal, setShowErrorsModal] = useState<boolean>(false);
   const [showA2UIModal, setShowA2UIModal] = useState<boolean>(false);
-  const [a2uiJson, setA2uiJson] = useState<any>(null);
-  const [jsonlPreview, setJsonlPreview] = useState<string>("");
-  const [componentTreesPreview, setComponentTreesPreview] = useState<
-    ComponentTreeNode[]
-  >([]);
-  
+  const renderMap = useMemo(
+    () => ({
+      Text: (props: any) => (
+        <span style={{ display: "inline-block", lineHeight: 1.6 }}>
+          {props?.text?.literalString ?? props?.value ?? ""}
+        </span>
+      ),
+    }),
+    []
+  );
+
+  const defaultJsonl = useMemo(
+    () =>
+      [
+        JSON.stringify({ beginRendering: simpleTextProtocol.beginRendering }),
+        JSON.stringify({ surfaceUpdate: simpleTextProtocol.surfaceUpdate }),
+      ].join("\n"),
+    []
+  );
+  const [jsonlInput, setJsonlInput] = useState<string>("");
+  const [componentTreePreview, setComponentTreePreview] = useState<ComponentTree | null>(null);
+  const [jsonlParseErrors, setJsonlParseErrors] = useState<Array<{ line: number; message: string }>>(
+    []
+  );
+
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -42,42 +62,56 @@ export function App() {
 
   useEffect(() => {
     // 调用init方法创建store实例
-    const newStore = init();
+    const newStore = init(renderMap);
     setStore(newStore);
-
+    
     // 设置store到a2uiParser
     a2uiParser.setStore(newStore);
-
-    const lines: string[] = [];
-    if (simpleTextMock.beginRendering) {
-      lines.push(JSON.stringify({ beginRendering: simpleTextMock.beginRendering }));
+    
+    // 解析simple-text.json数据
+    if (simpleTextProtocol.beginRendering) {
+      a2uiParser.parseMessage({ beginRendering: simpleTextProtocol.beginRendering });
     }
-    if (simpleTextMock.surfaceUpdate) {
-      lines.push(JSON.stringify({ surfaceUpdate: simpleTextMock.surfaceUpdate }));
+    if (simpleTextProtocol.surfaceUpdate) {
+      a2uiParser.parseMessage({ surfaceUpdate: simpleTextProtocol.surfaceUpdate });
     }
-    const jsonl = lines.join("\n");
-    setJsonlPreview(jsonl);
-    const { componentTrees } = a2uiParser.passJSONL(jsonl);
-    setComponentTreesPreview(componentTrees);
-
+    
     // 获取初始状态
     const initialState = newStore.getState();
     setStoreState(initialState);
+    setComponentTreePreview(buildComponentTree(initialState));
 
     // 订阅store的变化
     const unsubscribe = newStore.subscribe(() => {
-      setStoreState(newStore.getState());
+      const s = newStore.getState();
+      setStoreState(s);
+      setComponentTreePreview(buildComponentTree(s));
     });
 
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [renderMap]);
+
+  const activeSurface = storeState ? (Object.values(storeState.surfaceMap ?? {})[0] as any) : null;
+  const previewVNode = activeSurface?.rootNode?._vnode ?? null;
 
   // 滚动到最新消息
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (!showA2UIModal) return;
+    setJsonlInput((prev) => (prev.trim() === "" ? defaultJsonl : prev));
+  }, [showA2UIModal, defaultJsonl]);
+
+  const handleApplyJsonl = () => {
+    if (!store) return;
+    a2uiParser.setStore(store);
+    const { parseErrors } = a2uiParser.applyJSONL(jsonlInput);
+    setJsonlParseErrors(parseErrors);
+  };
 
   // 处理消息发送
   const handleSendMessage = () => {
@@ -423,6 +457,24 @@ export function App() {
                 <div>
                   <h3 style={{ margin: 0, marginBottom: '8px' }}>A2UI 预览</h3>
                   <p style={{ color: '#666' }}>A2UI 组件将在这里实时渲染</p>
+                  <div
+                    style={{
+                      marginTop: '12px',
+                      padding: '16px',
+                      border: '1px solid #eaeaea',
+                      borderRadius: '6px',
+                      backgroundColor: '#fff',
+                      textAlign: 'left'
+                    }}
+                  >
+                    {previewVNode ? (
+                      <div>{previewVNode as React.ReactNode}</div>
+                    ) : (
+                      <span style={{ color: '#999', fontSize: '12px' }}>
+                        当前 root 节点没有可渲染内容（请检查协议 root 是否命中组件，且 renderMap 已实现对应组件类型）
+                      </span>
+                    )}
+                  </div>
                   {storeState && (
                     <div style={{ 
                       marginTop: '24px',
@@ -634,38 +686,87 @@ export function App() {
                   whiteSpace: 'pre-wrap',
                   fontSize: '12px'
                 }}>
-                  {JSON.stringify(simpleTextMock, null, 2)}
+                  {JSON.stringify(simpleTextProtocol, null, 2)}
                 </pre>
               </div>
               <div style={{ marginBottom: '24px' }}>
                 <h3 style={{ margin: 0, fontSize: '14px', marginBottom: '8px' }}>下发 JSONL（协议流）</h3>
-                <pre style={{ 
-                  padding: '16px',
-                  backgroundColor: '#f5f5f5',
-                  borderRadius: '4px',
-                  overflow: 'auto',
-                  maxHeight: '200px',
-                  whiteSpace: 'pre-wrap',
-                  fontSize: '12px'
-                }}>
-                  {jsonlPreview || "（暂无）"}
-                </pre>
+                <p style={{ margin: '0 0 8px', fontSize: '12px', color: '#666' }}>
+                  每行一条 JSON 消息；点击「应用」后会依次 parseMessage，并由 TreeBuilder 生成组件树（当前 children 为占位空数组）。
+                </p>
+                <textarea
+                  value={jsonlInput}
+                  onChange={(e) => setJsonlInput(e.target.value)}
+                  spellCheck={false}
+                  style={{
+                    width: '100%',
+                    minHeight: '140px',
+                    boxSizing: 'border-box',
+                    padding: '12px',
+                    fontFamily: 'ui-monospace, monospace',
+                    fontSize: '12px',
+                    borderRadius: '4px',
+                    border: '1px solid #d9d9d9',
+                    resize: 'vertical',
+                  }}
+                />
+                <div style={{ marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={handleApplyJsonl}
+                    style={{
+                      padding: '6px 14px',
+                      backgroundColor: '#0070f3',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                    }}
+                  >
+                    应用 JSONL 并生成组件树
+                  </button>
+                  <span style={{ fontSize: '12px', color: '#888' }}>结果见下方「组件树预览」</span>
+                </div>
+                {jsonlParseErrors.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: '12px',
+                      padding: '10px 12px',
+                      backgroundColor: '#fff2f0',
+                      border: '1px solid #ffccc7',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                    }}
+                  >
+                    <strong style={{ color: '#cf1322' }}>解析 / 应用错误</strong>
+                    <ul style={{ margin: '8px 0 0', paddingLeft: '20px' }}>
+                      {jsonlParseErrors.map((err, idx) => (
+                        <li key={idx}>
+                          第 {err.line} 行：{err.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
               <div style={{ marginBottom: '24px' }}>
                 <h3 style={{ margin: 0, fontSize: '14px', marginBottom: '8px' }}>组件树预览（TreeBuilder）</h3>
-                <p style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#666' }}>
-                  每次 pass JSONL 后由 <code>buildComponentTrees</code> 生成；当前为占位（仅根 HydrateNode，<code>children</code> 为空）。
-                </p>
-                <pre style={{ 
-                  padding: '16px',
-                  backgroundColor: '#f5f5f5',
-                  borderRadius: '4px',
-                  overflow: 'auto',
-                  maxHeight: '220px',
-                  whiteSpace: 'pre-wrap',
-                  fontSize: '12px'
-                }}>
-                  {JSON.stringify(componentTreesPreview, null, 2)}
+                <pre
+                  style={{
+                    padding: '16px',
+                    backgroundColor: '#f0f7ff',
+                    border: '1px solid #d6e4ff',
+                    borderRadius: '4px',
+                    overflow: 'auto',
+                    maxHeight: '220px',
+                    whiteSpace: 'pre-wrap',
+                    fontSize: '12px',
+                  }}
+                >
+                  {componentTreePreview
+                    ? JSON.stringify(componentTreePreview, null, 2)
+                    : "暂无组件树（先应用 JSONL 或等待 store 更新）"}
                 </pre>
               </div>
               <div>
