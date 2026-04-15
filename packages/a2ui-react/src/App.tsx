@@ -8,6 +8,17 @@ import {
 } from "a2ui-core";
 import simpleTextProtocol from "../../a2ui-core/src/mock/simple-text.json";
 
+type LiteralValue =
+  | { literalString?: string; literalNumber?: number; literalBoolean?: boolean; literalArray?: unknown[]; path?: string }
+  | undefined
+  | null;
+
+function getByPath(source: any, path?: string) {
+  if (!path || path === "/") return source;
+  const parts = path.split("/").filter(Boolean);
+  return parts.reduce((acc, part) => (acc == null ? undefined : acc[part]), source);
+}
+
 export function App() {
   const [store, setStore] = useState<any>(null);
   const [storeState, setStoreState] = useState<any>(null);
@@ -19,13 +30,282 @@ export function App() {
   const [showStoreModal, setShowStoreModal] = useState<boolean>(false);
   const [showErrorsModal, setShowErrorsModal] = useState<boolean>(false);
   const [showA2UIModal, setShowA2UIModal] = useState<boolean>(false);
+  const [activeTabMap, setActiveTabMap] = useState<Record<string, number>>({});
+  const [modalOpenMap, setModalOpenMap] = useState<Record<string, boolean>>({});
+  const runtimeStateRef = useRef<any>(null);
+  const activeTabMapRef = useRef<Record<string, number>>({});
+  const modalOpenMapRef = useRef<Record<string, boolean>>({});
+
+  useEffect(() => {
+    runtimeStateRef.current = storeState;
+  }, [storeState]);
+  useEffect(() => {
+    activeTabMapRef.current = activeTabMap;
+  }, [activeTabMap]);
+  useEffect(() => {
+    modalOpenMapRef.current = modalOpenMap;
+  }, [modalOpenMap]);
+
+  const resolveValue = (value: LiteralValue, surfaceId?: string): any => {
+    if (!value) return undefined;
+    if (value.literalString !== undefined) return value.literalString;
+    if (value.literalNumber !== undefined) return value.literalNumber;
+    if (value.literalBoolean !== undefined) return value.literalBoolean;
+    if (value.literalArray !== undefined) return value.literalArray;
+    if (value.path) {
+      const model = runtimeStateRef.current?.dataModel?.[surfaceId ?? ""] ?? {};
+      return getByPath(model, value.path);
+    }
+    return undefined;
+  };
+
+  const resolveSurfaceIdByComponent = (componentId?: string) =>
+    runtimeStateRef.current?.hydrateNodeMap?.[componentId ?? ""]?.ownerSurfaceId as string | undefined;
+
+  const resolveChild = (componentId?: string) =>
+    runtimeStateRef.current?.hydrateNodeMap?.[componentId ?? ""]?._vnode ?? null;
+
+  const resolveChildren = (childrenConfig: any) => {
+    if (!childrenConfig) return [];
+    if (Array.isArray(childrenConfig.explicitList)) {
+      return childrenConfig.explicitList
+        .map((id: string) => resolveChild(id))
+        .filter(Boolean);
+    }
+    if (childrenConfig.template?.componentId && childrenConfig.template?.dataBinding) {
+      const templateId = childrenConfig.template.componentId;
+      const ownerSurfaceId = resolveSurfaceIdByComponent(templateId);
+      const dataMap = getByPath(
+        runtimeStateRef.current?.dataModel?.[ownerSurfaceId ?? ""] ?? {},
+        childrenConfig.template.dataBinding
+      );
+      const keys = dataMap && typeof dataMap === "object" ? Object.keys(dataMap) : [];
+      const templateNode = resolveChild(templateId);
+      return keys.map((key) =>
+        React.isValidElement(templateNode)
+          ? React.cloneElement(templateNode as React.ReactElement, { key: `${templateId}-${key}` })
+          : templateNode
+      );
+    }
+    return [];
+  };
+
   const renderMap = useMemo(
     () => ({
-      Text: (props: any) => (
-        <span style={{ display: "inline-block", lineHeight: 1.6 }}>
-          {props?.text?.literalString ?? props?.value ?? ""}
-        </span>
+      Text: (props: any) => {
+        const surfaceId = resolveSurfaceIdByComponent(props?.id);
+        const content = resolveValue(props?.text, surfaceId) ?? "";
+        const usageHint = props?.usageHint ?? "body";
+        const styleMap: Record<string, React.CSSProperties> = {
+          h1: { fontSize: "32px", fontWeight: 700 },
+          h2: { fontSize: "26px", fontWeight: 700 },
+          h3: { fontSize: "22px", fontWeight: 700 },
+          h4: { fontSize: "18px", fontWeight: 600 },
+          h5: { fontSize: "16px", fontWeight: 600 },
+          caption: { fontSize: "12px", color: "#666" },
+          body: { fontSize: "14px" },
+        };
+        return <span style={{ display: "inline-block", lineHeight: 1.6, ...(styleMap[usageHint] ?? styleMap.body) }}>{String(content)}</span>;
+      },
+      Image: (props: any) => {
+        const surfaceId = resolveSurfaceIdByComponent(props?.id);
+        const src = resolveValue(props?.url, surfaceId) ?? "";
+        const sizeMap: Record<string, number> = { icon: 20, avatar: 48, smallFeature: 120, mediumFeature: 220, largeFeature: 320 };
+        const base = sizeMap[props?.usageHint] ?? 180;
+        return (
+          <img
+            src={String(src)}
+            alt={props?.id ?? "a2ui-image"}
+            style={{
+              width: props?.usageHint === "header" ? "100%" : base,
+              height: props?.usageHint === "header" ? 180 : base,
+              objectFit: props?.fit ?? "cover",
+              borderRadius: props?.usageHint === "avatar" ? "50%" : 8,
+              backgroundColor: "#f2f2f2",
+            }}
+          />
+        );
+      },
+      Icon: (props: any) => {
+        const surfaceId = resolveSurfaceIdByComponent(props?.id);
+        const name = resolveValue(props?.name, surfaceId) ?? "help";
+        return <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, padding: "2px 6px", border: "1px solid #ddd", borderRadius: 4 }}>{String(name)}</span>;
+      },
+      Video: (props: any) => {
+        const surfaceId = resolveSurfaceIdByComponent(props?.id);
+        const src = resolveValue(props?.url, surfaceId) ?? "";
+        return <video controls src={String(src)} style={{ width: "100%", maxWidth: 420, borderRadius: 8 }} />;
+      },
+      AudioPlayer: (props: any) => {
+        const surfaceId = resolveSurfaceIdByComponent(props?.id);
+        const src = resolveValue(props?.url, surfaceId) ?? "";
+        const description = resolveValue(props?.description, surfaceId);
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {description ? <span style={{ fontSize: 13 }}>{String(description)}</span> : null}
+            <audio controls src={String(src)} />
+          </div>
+        );
+      },
+      Row: (props: any) => {
+        const children = resolveChildren(props?.children);
+        return <div style={{ display: "flex", flexDirection: "row", justifyContent: "flex-start", alignItems: "center", gap: 10 }}>{children}</div>;
+      },
+      Column: (props: any) => {
+        const children = resolveChildren(props?.children);
+        return <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", alignItems: "stretch", gap: 10 }}>{children}</div>;
+      },
+      List: (props: any) => {
+        const children = resolveChildren(props?.children);
+        const isHorizontal = props?.direction === "horizontal";
+        return <div style={{ display: "flex", flexDirection: isHorizontal ? "row" : "column", gap: 10 }}>{children}</div>;
+      },
+      Card: (props: any) => (
+        <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 12, backgroundColor: "#fff", boxShadow: "0 1px 6px rgba(0,0,0,0.06)" }}>
+          {resolveChild(props?.child)}
+        </div>
       ),
+      Tabs: (props: any) => {
+        const tabItems = Array.isArray(props?.tabItems) ? props.tabItems : [];
+        const activeIdx = activeTabMapRef.current[props?.id] ?? 0;
+        const activeItem = tabItems[activeIdx];
+        return (
+          <div style={{ border: "1px solid #ececec", borderRadius: 8 }}>
+            <div style={{ display: "flex", borderBottom: "1px solid #ececec" }}>
+              {tabItems.map((tab: any, idx: number) => {
+                const surfaceId = resolveSurfaceIdByComponent(props?.id);
+                const title = resolveValue(tab?.title, surfaceId) ?? `Tab ${idx + 1}`;
+                return (
+                  <button
+                    key={`${props?.id}-tab-${idx}`}
+                    onClick={() => setActiveTabMap((prev) => ({ ...prev, [props?.id]: idx }))}
+                    style={{ border: "none", background: idx === activeIdx ? "#f0f7ff" : "transparent", padding: "8px 12px", cursor: "pointer" }}
+                  >
+                    {String(title)}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ padding: 12 }}>{resolveChild(activeItem?.child)}</div>
+          </div>
+        );
+      },
+      Divider: (props: any) =>
+        props?.axis === "vertical" ? (
+          <div style={{ width: 1, height: 24, backgroundColor: "#ddd" }} />
+        ) : (
+          <div style={{ width: "100%", height: 1, backgroundColor: "#ddd" }} />
+        ),
+      Modal: (props: any) => {
+        const open = !!modalOpenMapRef.current[props?.id];
+        return (
+          <div style={{ position: "relative" }}>
+            <div onClick={() => setModalOpenMap((prev) => ({ ...prev, [props?.id]: true }))} style={{ display: "inline-block", cursor: "pointer" }}>
+              {resolveChild(props?.entryPointChild)}
+            </div>
+            {open ? (
+              <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}>
+                <div style={{ background: "#fff", borderRadius: 8, minWidth: 320, maxWidth: 680, padding: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                    <button onClick={() => setModalOpenMap((prev) => ({ ...prev, [props?.id]: false }))}>关闭</button>
+                  </div>
+                  {resolveChild(props?.contentChild)}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        );
+      },
+      Button: (props: any) => (
+        <button
+          onClick={() => {
+            if (!props?.action?.name) return;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `action-${Date.now()}`,
+                type: "assistant",
+                content: `触发 action: ${props.action.name}`,
+                status: "completed",
+              },
+            ]);
+          }}
+          style={{
+            border: "none",
+            borderRadius: 6,
+            padding: "8px 12px",
+            cursor: "pointer",
+            backgroundColor: props?.primary ? "#1677ff" : "#efefef",
+            color: props?.primary ? "#fff" : "#222",
+          }}
+        >
+          {resolveChild(props?.child) ?? "按钮"}
+        </button>
+      ),
+      CheckBox: (props: any) => {
+        const surfaceId = resolveSurfaceIdByComponent(props?.id);
+        const label = resolveValue(props?.label, surfaceId) ?? "";
+        const checked = !!resolveValue(props?.value, surfaceId);
+        return (
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={checked} readOnly />
+            <span>{String(label)}</span>
+          </label>
+        );
+      },
+      TextField: (props: any) => {
+        const surfaceId = resolveSurfaceIdByComponent(props?.id);
+        const label = resolveValue(props?.label, surfaceId) ?? "输入";
+        const value = resolveValue(props?.text, surfaceId) ?? "";
+        const inputTypeMap: Record<string, string> = {
+          date: "date",
+          longText: "text",
+          number: "number",
+          shortText: "text",
+          obscured: "password",
+        };
+        return (
+          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "#666" }}>{String(label)}</span>
+            <input type={inputTypeMap[props?.textFieldType] ?? "text"} value={String(value)} readOnly style={{ border: "1px solid #d9d9d9", borderRadius: 6, padding: "8px 10px" }} />
+          </label>
+        );
+      },
+      DateTimeInput: (props: any) => {
+        const surfaceId = resolveSurfaceIdByComponent(props?.id);
+        const value = resolveValue(props?.value, surfaceId) ?? "";
+        const inputType = props?.enableDate && props?.enableTime ? "datetime-local" : props?.enableDate ? "date" : "time";
+        return <input type={inputType} value={String(value)} readOnly style={{ border: "1px solid #d9d9d9", borderRadius: 6, padding: "8px 10px" }} />;
+      },
+      MultipleChoice: (props: any) => {
+        const surfaceId = resolveSurfaceIdByComponent(props?.id);
+        const selected = new Set((resolveValue(props?.selections, surfaceId) ?? []) as string[]);
+        const options = Array.isArray(props?.options) ? props.options : [];
+        const chips = props?.variant === "chips";
+        return (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {options.map((opt: any, idx: number) => {
+              const label = resolveValue(opt?.label, surfaceId) ?? opt?.value ?? `Option ${idx + 1}`;
+              const isActive = selected.has(opt?.value);
+              return chips ? (
+                <span key={`${props?.id}-chip-${idx}`} style={{ padding: "4px 10px", borderRadius: 999, backgroundColor: isActive ? "#e6f4ff" : "#f2f2f2", border: `1px solid ${isActive ? "#91caff" : "#ddd"}` }}>
+                  {String(label)}
+                </span>
+              ) : (
+                <label key={`${props?.id}-checkbox-${idx}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 160 }}>
+                  <input type="checkbox" checked={isActive} readOnly />
+                  <span>{String(label)}</span>
+                </label>
+              );
+            })}
+          </div>
+        );
+      },
+      Slider: (props: any) => {
+        const surfaceId = resolveSurfaceIdByComponent(props?.id);
+        const value = Number(resolveValue(props?.value, surfaceId) ?? 0);
+        return <input type="range" min={props?.minValue ?? 0} max={props?.maxValue ?? 100} value={value} readOnly />;
+      },
     }),
     []
   );
@@ -46,6 +326,7 @@ export function App() {
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const storeRef = useRef<any>(null);
 
   // 场景列表
   const scenes = [
@@ -59,6 +340,10 @@ export function App() {
     { value: "local-action", label: "Local action → dataModel" },
     { value: "agent-back", label: "Agent back" }
   ];
+
+  useEffect(() => {
+    storeRef.current = store;
+  }, [store]);
 
   useEffect(() => {
     // 调用init方法创建store实例
@@ -79,13 +364,13 @@ export function App() {
     // 获取初始状态
     const initialState = newStore.getState();
     setStoreState(initialState);
-    setComponentTreePreview(buildComponentTree(initialState));
+    setComponentTreePreview(buildComponentTree(initialState as any));
 
     // 订阅store的变化
     const unsubscribe = newStore.subscribe(() => {
       const s = newStore.getState();
       setStoreState(s);
-      setComponentTreePreview(buildComponentTree(s));
+      setComponentTreePreview(buildComponentTree(s as any));
     });
 
     return () => {
@@ -105,6 +390,45 @@ export function App() {
     if (!showA2UIModal) return;
     setJsonlInput((prev) => (prev.trim() === "" ? defaultJsonl : prev));
   }, [showA2UIModal, defaultJsonl]);
+
+  useEffect(() => {
+    const hot = (
+      import.meta as ImportMeta & {
+        hot?: {
+          accept: (
+            dep: string,
+            callback: (nextModule: unknown) => void
+          ) => void | (() => void);
+        };
+      }
+    ).hot;
+    if (!hot) return;
+
+    const applyProtocolToStore = (protocol: any) => {
+      const currentStore = storeRef.current;
+      if (!currentStore) return;
+
+      a2uiParser.setStore(currentStore);
+      if (protocol?.beginRendering) {
+        a2uiParser.parseMessage({ beginRendering: protocol.beginRendering });
+      }
+      if (protocol?.surfaceUpdate) {
+        a2uiParser.parseMessage({ surfaceUpdate: protocol.surfaceUpdate });
+      }
+    };
+
+    const dispose = hot.accept(
+      "../../a2ui-core/src/mock/simple-text.json",
+      (nextModule: unknown) => {
+        const nextProtocol = (nextModule as any)?.default ?? nextModule;
+        applyProtocolToStore(nextProtocol);
+      }
+    );
+
+    return () => {
+      dispose?.();
+    };
+  }, []);
 
   const handleApplyJsonl = () => {
     if (!store) return;
