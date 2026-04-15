@@ -2,6 +2,7 @@ import {
   createA2uiStore,
   HydrateNode,
   Surface,
+  ErrorType,
   type RenderFunction,
   type RenderMap,
 } from '../store/index';
@@ -102,7 +103,7 @@ class A2UIParser {
   }
   
   parseBeginRendering(beginRendering: BeginRendering): ParserResult {
-    const { surfaceId, root } = beginRendering;
+    const { surfaceId, root, catalogId } = beginRendering;
     
     // 检查hydrateNodeMap中是否已经存在该node
     let rootNode = this.store.getState().getHydrateNode(root);
@@ -123,7 +124,8 @@ class A2UIParser {
     const surface: Surface = {
       surfaceId,
       beginrender: true,
-      rootNode
+      rootNode,
+      ...(catalogId !== undefined ? { catalogId } : {}),
     };
     
     // 添加到store
@@ -142,7 +144,7 @@ class A2UIParser {
       const { id, component: componentData } = component;
       
       // 渲染组件
-      const _vnode = this.renderComponent(id, componentData);
+      const _vnode = this.renderComponent(id, componentData, surfaceId);
       
       // 创建hydrateNode
       const hydrateNode: HydrateNode = {
@@ -228,33 +230,69 @@ class A2UIParser {
     return { deleteSurface };
   }
   
-  renderComponent(componentId: string, componentData: Record<string, any>): any {
-    const renderMap = this.store.getState().renderMap;
-    
-    // 获取组件类型
+  renderComponent(componentId: string, componentData: Record<string, any>, surfaceId: string): any {
+    const state = this.store.getState();
+    const renderMap = state.renderMap;
+    const surface = state.getSurface(surfaceId);
+    const catalogId = surface?.catalogId;
+
+    const errEmpty = `renderer:${surfaceId}:${componentId}:empty-type`;
+    const errMissing = `renderer:${surfaceId}:${componentId}:not-registered`;
+
+    const clearRendererErrors = () => {
+      state.removeError(errEmpty);
+      state.removeError(errMissing);
+    };
+
+    // 获取组件类型（协议 component 为单键对象，键名即目录中的组件类型）
     const componentType = Object.keys(componentData)[0];
     if (!componentType) {
+      state.removeError(errMissing);
+      state.addError(errEmpty, {
+        type: ErrorType.PARE_ERROR,
+        content: `surface "${surfaceId}" 下组件 "${componentId}" 的 component 对象为空，无法解析协议组件类型。`,
+      });
       return null;
     }
-    
-    // 检查renderMap中是否有对应的渲染函数
+
     const renderFunction = renderMap[componentType];
-    if (renderFunction) {
-      // 使用渲染函数渲染组件
+    const registered = typeof renderFunction === 'function';
+
+    if (registered) {
+      clearRendererErrors();
       const props = { ...componentData[componentType], id: componentId };
       const vnode = renderFunction(props);
-      
-      // 更新hydrateNode的_vnode属性
-      const hydrateNode = this.store.getState().getHydrateNode(componentId);
+
+      const hydrateNode = state.getHydrateNode(componentId);
       if (hydrateNode) {
-        this.store.getState().updateHydrateNode(componentId, { ...hydrateNode, _vnode: vnode });
+        state.updateHydrateNode(componentId, { ...hydrateNode, _vnode: vnode });
       }
-      
+
       return vnode;
-    } else {
-      // 如果没有渲染函数，返回null
-      return null;
     }
+
+    state.removeError(errEmpty);
+    const catalogHint =
+      catalogId !== undefined
+        ? ` 当前 surface 的 catalogId 为 "${catalogId}"，请为该目录下的组件类型提供渲染实现。`
+        : '';
+
+    const reason =
+      renderFunction === undefined
+        ? `类型 "${componentType}" 未在 renderMap 中注册。`
+        : `类型 "${componentType}" 在 renderMap 中有条目但不是可调用函数，无法作为渲染器使用。`;
+
+    state.addError(errMissing, {
+      type: ErrorType.RENDERER_NOT_REGISTERED,
+      content: `surface "${surfaceId}" 下组件 "${componentId}"：${reason}请在 init 或 setRenderMap 中为该协议组件类型注册渲染函数。${catalogHint}`.trim(),
+      details: {
+        surfaceId,
+        componentId,
+        componentType,
+        ...(catalogId !== undefined ? { catalogId } : {}),
+      },
+    });
+    return null;
   }
   
   parseJSONL(jsonl: string): A2UIMessage[] {

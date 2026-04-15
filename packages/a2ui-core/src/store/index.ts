@@ -2,11 +2,24 @@ import { createStore } from 'zustand/vanilla';
 
 export enum ErrorType {
   PARE_ERROR,
+  /** 协议中的组件类型在 renderMap 中未注册 */
+  RENDERER_NOT_REGISTERED,
+}
+
+/** 渲染器未注册类错误附带的结构化字段，便于 UI 展示与排查 */
+export interface RendererRegistrationErrorDetails {
+  surfaceId: string;
+  componentId: string;
+  /** 协议 component 对象的类型键，如 Text、Row */
+  componentType: string;
+  /** beginRendering 中的 catalogId，未开始时可能为空 */
+  catalogId?: string;
 }
 
 export interface Error {
   type: ErrorType;
   content: string;
+  details?: RendererRegistrationErrorDetails;
 }
 
 export interface HydrateNode {
@@ -20,6 +33,8 @@ export interface Surface {
   surfaceId: string;
   beginrender: boolean;
   rootNode: HydrateNode;
+  /** beginRendering.catalogId，用于错误信息中与协议目录对齐 */
+  catalogId?: string;
 }
 
 export type RenderFunction = (props: any) => any;

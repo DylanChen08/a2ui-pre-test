@@ -1,6 +1,6 @@
-export * from "./parser/index";
-export * from "./vnode/index";
-export * from "./treebuilder/index";
-export * from "./store/index";
-export * from "./mock/a2ui-mock-data";
+export * from "./parser/index.ts";
+export * from "./vnode/index.ts";
+export * from "./treebuilder/index.ts";
+export * from "./store/index.ts";
+export * from "./mock/a2ui-mock-data.ts";
 

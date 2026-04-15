@@ -625,9 +625,25 @@ export function App() {
               </button>
             </div>
             <div style={{ padding: '24px' }}>
-              <div style={{ textAlign: 'center', color: '#999' }}>
-                暂无错误信息
-              </div>
+              {storeState && Object.keys(storeState.errorMap ?? {}).length > 0 ? (
+                <pre
+                  style={{
+                    padding: '16px',
+                    backgroundColor: '#fff7e6',
+                    border: '1px solid #ffd591',
+                    borderRadius: '4px',
+                    overflow: 'auto',
+                    maxHeight: '420px',
+                    whiteSpace: 'pre-wrap',
+                    fontSize: '12px',
+                    textAlign: 'left',
+                  }}
+                >
+                  {JSON.stringify(storeState.errorMap, null, 2)}
+                </pre>
+              ) : (
+                <div style={{ textAlign: 'center', color: '#999' }}>暂无错误信息</div>
+              )}
             </div>
           </div>
         </div>

@@ -3,12 +3,15 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import React from 'react';
 import { a2uiParser, A2UIMessage, RenderMap, RenderFunction } from '../src/parser';
-import { createA2uiStore } from '../src/store';
+import { createA2uiStore, ErrorType } from '../src/store';
 
 describe('A2UIParser', () => {
+  let parserStore: ReturnType<typeof createA2uiStore>;
+
   beforeEach(() => {
+    parserStore = createA2uiStore();
     a2uiParser.resetRuntimeState();
-    a2uiParser.setStore(createA2uiStore());
+    a2uiParser.setStore(parserStore);
   });
 
   describe('parseBeginRendering', () => {
@@ -49,6 +52,10 @@ describe('A2UIParser', () => {
         readFileSync(join(__dirname, '../mock/simple-text.json'), 'utf-8')
       ) as A2UIMessage;
 
+      parserStore.getState().setRenderMap({
+        Text: (props: any) => ({ type: 'Text', props }),
+      });
+
       const result = a2uiParser.parseMessage({
         surfaceUpdate: mockData.surfaceUpdate
       });
@@ -64,6 +71,10 @@ describe('A2UIParser', () => {
     });
 
     it('should parse multiple components', () => {
+      parserStore.getState().setRenderMap({
+        Text: (props: any) => ({ type: 'Text', props }),
+      });
+
       const multiComponentData: A2UIMessage = {
         surfaceUpdate: {
           surfaceId: 'surface-002',
@@ -159,19 +170,12 @@ describe('A2UIParser', () => {
   });
 
   describe('render functionality', () => {
-    beforeEach(() => {
-      const testStore = createA2uiStore();
-      a2uiParser.setStore(testStore);
-    });
-
     it('should set renderMap', () => {
-      const testStore = createA2uiStore();
       const mockRenderMap: RenderMap = {
         Text: (props: any) => React.createElement('div', { 'data-testid': 'text', ...props })
       };
 
-      testStore.getState().setRenderMap(mockRenderMap);
-      a2uiParser.setStore(testStore);
+      parserStore.getState().setRenderMap(mockRenderMap);
 
       const result = a2uiParser.parseMessage({
         surfaceUpdate: {
@@ -196,7 +200,6 @@ describe('A2UIParser', () => {
     });
 
     it('should render component using renderMap', () => {
-      const testStore = createA2uiStore();
       const mockRenderFunction: RenderFunction = (props: any) => 
         React.createElement('div', { 'data-testid': 'text', ...props });
 
@@ -204,8 +207,7 @@ describe('A2UIParser', () => {
         Text: mockRenderFunction
       };
 
-      testStore.getState().setRenderMap(mockRenderMap);
-      a2uiParser.setStore(testStore);
+      parserStore.getState().setRenderMap(mockRenderMap);
 
       const result = a2uiParser.parseMessage({
         surfaceUpdate: {
@@ -227,7 +229,7 @@ describe('A2UIParser', () => {
       expect(result.hydrateNodes![0]._vnode.props).to.have.property('data-testid', 'text');
     });
 
-    it('should return original component data when renderMap is not set', () => {
+    it('should record error when renderMap is not set', () => {
       const result = a2uiParser.parseMessage({
         surfaceUpdate: {
           surfaceId: 'surface-001',
@@ -244,21 +246,19 @@ describe('A2UIParser', () => {
         }
       });
 
-      expect(result.hydrateNodes![0]._vnode).to.deep.equal({
-        Text: {
-          text: { literalString: 'Original Text' }
-        }
-      });
+      expect(result.hydrateNodes![0]._vnode).to.equal(null);
+      const err = parserStore.getState().errorMap['renderer:surface-001:text-component:not-registered'];
+      expect(err).to.exist;
+      expect(err?.type).to.equal(ErrorType.RENDERER_NOT_REGISTERED);
+      expect(err?.content).to.include('Text');
     });
 
-    it('should return original component data when component not in renderMap', () => {
-      const testStore = createA2uiStore();
+    it('should record error when component type not in renderMap', () => {
       const mockRenderMap: RenderMap = {
         Button: (props: any) => ({ type: 'Button', props })
       };
 
-      testStore.getState().setRenderMap(mockRenderMap);
-      a2uiParser.setStore(testStore);
+      parserStore.getState().setRenderMap(mockRenderMap);
 
       const result = a2uiParser.parseMessage({
         surfaceUpdate: {
@@ -276,22 +276,67 @@ describe('A2UIParser', () => {
         }
       });
 
-      expect(result.hydrateNodes![0]._vnode).to.deep.equal({
-        Text: {
-          text: { literalString: 'Unknown Component' }
-        }
+      expect(result.hydrateNodes![0]._vnode).to.equal(null);
+      const err = parserStore.getState().errorMap['renderer:surface-001:text-component:not-registered'];
+      expect(err).to.exist;
+      expect(err?.type).to.equal(ErrorType.RENDERER_NOT_REGISTERED);
+      expect(err?.details?.componentType).to.equal('Text');
+      expect(err?.details?.surfaceId).to.equal('surface-001');
+      expect(err?.details?.componentId).to.equal('text-component');
+    });
+
+    it('should record error when renderMap entry is not a function', () => {
+      parserStore.getState().setRenderMap({ Text: 'not-a-function' as any });
+
+      a2uiParser.parseMessage({
+        surfaceUpdate: {
+          surfaceId: 'surface-001',
+          components: [
+            {
+              id: 'text-component',
+              component: {
+                Text: { text: { literalString: 'x' } },
+              },
+            },
+          ],
+        },
       });
+
+      const err = parserStore.getState().errorMap['renderer:surface-001:text-component:not-registered'];
+      expect(err).to.exist;
+      expect(err?.type).to.equal(ErrorType.RENDERER_NOT_REGISTERED);
+      expect(err?.content).to.include('不是可调用函数');
+    });
+
+    it('should include catalogId in error when beginRendering provided it', () => {
+      a2uiParser.parseMessage({
+        beginRendering: {
+          surfaceId: 's1',
+          root: 'c1',
+          catalogId: 'https://example.com/catalog.json',
+        },
+      });
+      parserStore.getState().setRenderMap({});
+
+      a2uiParser.parseMessage({
+        surfaceUpdate: {
+          surfaceId: 's1',
+          components: [{ id: 'c1', component: { Text: { text: { literalString: 'hi' } } } }],
+        },
+      });
+
+      const err = parserStore.getState().errorMap['renderer:s1:c1:not-registered'];
+      expect(err?.details?.catalogId).to.equal('https://example.com/catalog.json');
+      expect(err?.content).to.include('https://example.com/catalog.json');
     });
 
     it('should render multiple components with different types', () => {
-      const testStore = createA2uiStore();
       const mockRenderMap: RenderMap = {
         Text: (props: any) => ({ type: 'Text', props }),
         Button: (props: any) => ({ type: 'Button', props })
       };
 
-      testStore.getState().setRenderMap(mockRenderMap);
-      a2uiParser.setStore(testStore);
+      parserStore.getState().setRenderMap(mockRenderMap);
 
       const result = a2uiParser.parseMessage({
         surfaceUpdate: {
