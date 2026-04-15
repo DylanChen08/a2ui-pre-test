@@ -13,6 +13,25 @@ type LiteralValue =
   | undefined
   | null;
 
+type ProtocolDiagnostic = {
+  severity: "error" | "warning" | "info";
+  title: string;
+  detail: string;
+  fixSuggestion: string;
+};
+
+type ProtocolAnalysis = {
+  syntaxErrors: Array<{ line: number; message: string }>;
+  diagnostics: ProtocolDiagnostic[];
+  renderMapKeys: string[];
+  rootSurfaceId?: string;
+  rootNodeId?: string;
+  rootComponentType?: string;
+  rootHitRenderMap: boolean;
+  availableComponentIds: string[];
+  unsupportedComponentTypes: string[];
+};
+
 function getByPath(source: any, path?: string) {
   if (!path || path === "/") return source;
   const parts = path.split("/").filter(Boolean);
@@ -325,6 +344,7 @@ export function App() {
   );
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const jsonlEditorRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const storeRef = useRef<any>(null);
 
@@ -436,6 +456,142 @@ export function App() {
     const { parseErrors } = a2uiParser.applyJSONL(jsonlInput);
     setJsonlParseErrors(parseErrors);
   };
+
+  const focusProtocolEditor = () => {
+    if (!showA2UIModal) {
+      setShowA2UIModal(true);
+      setTimeout(() => {
+        jsonlEditorRef.current?.focus();
+        jsonlEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 60);
+      return;
+    }
+    jsonlEditorRef.current?.focus();
+    jsonlEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  const protocolAnalysis = useMemo<ProtocolAnalysis>(() => {
+    const renderMapKeys = Object.keys(renderMap ?? {});
+    const syntaxErrors: Array<{ line: number; message: string }> = [];
+    const diagnostics: ProtocolDiagnostic[] = [];
+    const rootBySurface = new Map<string, string>();
+    const componentTypeById = new Map<string, string>();
+    const componentIds: string[] = [];
+    const allComponentTypes: string[] = [];
+    let latestSurfaceId = "";
+
+    const lines = jsonlInput
+      .split("\n")
+      .map((raw, idx) => ({ raw: raw.trim(), lineNo: idx + 1 }))
+      .filter((item) => item.raw !== "");
+
+    for (const item of lines) {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(item.raw);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "JSON 语法错误";
+        syntaxErrors.push({ line: item.lineNo, message });
+        continue;
+      }
+
+      const begin = parsed?.beginRendering;
+      if (begin?.surfaceId && begin?.root) {
+        latestSurfaceId = begin.surfaceId;
+        rootBySurface.set(begin.surfaceId, begin.root);
+      }
+
+      const update = parsed?.surfaceUpdate;
+      if (update?.surfaceId && Array.isArray(update.components)) {
+        latestSurfaceId = update.surfaceId;
+        for (const componentNode of update.components) {
+          const id = componentNode?.id;
+          const componentPayload = componentNode?.component;
+          if (!id || !componentPayload || typeof componentPayload !== "object") continue;
+          const type = Object.keys(componentPayload)[0];
+          if (!type) continue;
+          componentIds.push(id);
+          allComponentTypes.push(type);
+          componentTypeById.set(id, type);
+        }
+      }
+    }
+
+    if (syntaxErrors.length > 0) {
+      diagnostics.push({
+        severity: "error",
+        title: "协议 JSON 存在语法错误",
+        detail: `检测到 ${syntaxErrors.length} 处 JSON 语法错误，无法稳定解析协议结构。`,
+        fixSuggestion: "先修复语法错误，再点击“应用 JSONL 并生成组件树”。",
+      });
+    }
+
+    const rootSurfaceId = latestSurfaceId || rootBySurface.keys().next().value;
+    const rootNodeId = rootSurfaceId ? rootBySurface.get(rootSurfaceId) : undefined;
+    const rootComponentType = rootNodeId ? componentTypeById.get(rootNodeId) : undefined;
+    const rootHitRenderMap = !!rootComponentType && renderMapKeys.includes(rootComponentType);
+
+    if (!rootSurfaceId) {
+      diagnostics.push({
+        severity: "warning",
+        title: "未检测到 beginRendering.surfaceId",
+        detail: "当前 JSONL 中没有有效的 beginRendering 消息，无法推断 root 节点。",
+        fixSuggestion: "请补充 beginRendering 消息，例如 {\"beginRendering\":{\"surfaceId\":\"surface-001\",\"root\":\"xxx\"}}。",
+      });
+    } else if (!rootNodeId) {
+      diagnostics.push({
+        severity: "warning",
+        title: "未检测到 root 节点",
+        detail: `surfaceId="${rootSurfaceId}" 还没有 root 字段。`,
+        fixSuggestion: "请在 beginRendering 中补充 root 节点 id。",
+      });
+    } else if (!rootComponentType) {
+      diagnostics.push({
+        severity: "error",
+        title: "root 节点未命中组件定义",
+        detail: `检测到 root 节点为 "${rootNodeId}"，但未在 surfaceUpdate.components 中找到同 id 组件。`,
+        fixSuggestion: `请检查 root id 是否拼写一致。当前可用组件 id：${componentIds.length > 0 ? JSON.stringify(componentIds) : "[]"}`,
+      });
+    } else if (!rootHitRenderMap) {
+      diagnostics.push({
+        severity: "error",
+        title: "root 组件类型未注册到 renderMap",
+        detail: `检测到 root 节点 "${rootNodeId}" 的组件类型为 "${rootComponentType}"，当前 renderMap 未命中。`,
+        fixSuggestion: `请检查 renderMap 是否包含该 key，当前 renderMap 仅注册了 ${JSON.stringify(renderMapKeys)}。`,
+      });
+    } else {
+      diagnostics.push({
+        severity: "info",
+        title: "root 节点校验通过",
+        detail: `root 节点 "${rootNodeId}" 命中组件类型 "${rootComponentType}"，且 renderMap 已注册。`,
+        fixSuggestion: "若仍无渲染结果，请继续检查组件 props、数据绑定和 children 配置。",
+      });
+    }
+
+    const unsupportedComponentTypes = Array.from(new Set(allComponentTypes)).filter(
+      (type) => !renderMapKeys.includes(type)
+    );
+    if (unsupportedComponentTypes.length > 0) {
+      diagnostics.push({
+        severity: "warning",
+        title: "检测到未注册组件类型",
+        detail: `协议中存在 ${unsupportedComponentTypes.length} 个组件类型未被 renderMap 支持。`,
+        fixSuggestion: `未注册类型：${JSON.stringify(unsupportedComponentTypes)}，请补齐 renderMap 或修改协议组件类型。`,
+      });
+    }
+
+    return {
+      syntaxErrors,
+      diagnostics,
+      renderMapKeys,
+      rootSurfaceId,
+      rootNodeId,
+      rootComponentType,
+      rootHitRenderMap,
+      availableComponentIds: Array.from(new Set(componentIds)),
+      unsupportedComponentTypes,
+    };
+  }, [jsonlInput, renderMap]);
 
   // 处理消息发送
   const handleSendMessage = () => {
@@ -794,10 +950,82 @@ export function App() {
                     {previewVNode ? (
                       <div>{previewVNode as React.ReactNode}</div>
                     ) : (
-                      <span style={{ color: '#999', fontSize: '12px' }}>
-                        当前 root 节点没有可渲染内容（请检查协议 root 是否命中组件，且 renderMap 已实现对应组件类型）
-                      </span>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-start" }}>
+                        <span style={{ color: '#999', fontSize: '12px' }}>
+                          当前 root 节点没有可渲染内容（请检查协议 root 是否命中组件，且 renderMap 已实现对应组件类型）
+                        </span>
+                        <button
+                          type="button"
+                          onClick={focusProtocolEditor}
+                          style={{
+                            padding: "6px 10px",
+                            border: "1px solid #91caff",
+                            borderRadius: "4px",
+                            background: "#e6f4ff",
+                            color: "#0958d9",
+                            fontSize: "12px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          快速定位到协议编辑区
+                        </button>
+                      </div>
                     )}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: "12px",
+                      border: "1px solid #e8e8e8",
+                      borderRadius: "6px",
+                      padding: "12px",
+                      textAlign: "left",
+                      backgroundColor: "#fafafa",
+                    }}
+                  >
+                    <h4 style={{ margin: 0, marginBottom: "8px", fontSize: "13px" }}>协议命中可视化校验</h4>
+                    <div style={{ display: "flex", gap: "12px", alignItems: "stretch" }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: "12px", color: "#666", marginBottom: "6px" }}>renderMap 白名单</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                          {protocolAnalysis.renderMapKeys.map((typeName) => (
+                            <span
+                              key={typeName}
+                              style={{
+                                fontSize: "12px",
+                                padding: "2px 8px",
+                                borderRadius: "999px",
+                                border: "1px solid #d9d9d9",
+                                background: "#fff",
+                              }}
+                            >
+                              {typeName}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div style={{ width: "1px", background: "#f0f0f0" }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: "12px", color: "#666", marginBottom: "6px" }}>rootNode 实际组件</div>
+                        <div
+                          style={{
+                            fontSize: "12px",
+                            padding: "8px",
+                            borderRadius: "6px",
+                            border: `1px solid ${protocolAnalysis.rootHitRenderMap ? "#b7eb8f" : "#ffa39e"}`,
+                            background: protocolAnalysis.rootHitRenderMap ? "#f6ffed" : "#fff1f0",
+                            color: protocolAnalysis.rootHitRenderMap ? "#237804" : "#cf1322",
+                          }}
+                        >
+                          {protocolAnalysis.rootComponentType ?? "未识别"}
+                          <span style={{ marginLeft: "8px" }}>
+                            {protocolAnalysis.rootHitRenderMap ? "命中" : "未命中"}
+                          </span>
+                        </div>
+                        <div style={{ marginTop: "6px", fontSize: "12px", color: "#666" }}>
+                          root 节点 id：{protocolAnalysis.rootNodeId ?? "未识别"}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   {storeState && (
                     <div style={{ 
@@ -1035,6 +1263,7 @@ export function App() {
                   每行一条 JSON 消息；点击「应用」后会依次 parseMessage，并由 TreeBuilder 生成组件树（当前 children 为占位空数组）。
                 </p>
                 <textarea
+                  ref={jsonlEditorRef}
                   value={jsonlInput}
                   onChange={(e) => setJsonlInput(e.target.value)}
                   spellCheck={false}
@@ -1068,6 +1297,61 @@ export function App() {
                   </button>
                   <span style={{ fontSize: '12px', color: '#888' }}>结果见下方「组件树预览」</span>
                 </div>
+                {protocolAnalysis.diagnostics.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: "12px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px",
+                    }}
+                  >
+                    {protocolAnalysis.diagnostics.map((diag, idx) => {
+                      const palette =
+                        diag.severity === "error"
+                          ? { bg: "#fff2f0", border: "#ffccc7", title: "#cf1322" }
+                          : diag.severity === "warning"
+                            ? { bg: "#fffbe6", border: "#ffe58f", title: "#ad6800" }
+                            : { bg: "#f6ffed", border: "#b7eb8f", title: "#237804" };
+                      return (
+                        <div
+                          key={`${diag.title}-${idx}`}
+                          style={{
+                            padding: "10px 12px",
+                            backgroundColor: palette.bg,
+                            border: `1px solid ${palette.border}`,
+                            borderRadius: "4px",
+                            fontSize: "12px",
+                          }}
+                        >
+                          <div style={{ color: palette.title, fontWeight: 600 }}>{diag.title}</div>
+                          <div style={{ marginTop: "4px", color: "#333" }}>{diag.detail}</div>
+                          <div style={{ marginTop: "4px", color: "#666" }}>
+                            一键修复建议：{diag.fixSuggestion}
+                          </div>
+                          {(diag.severity === "error" || diag.severity === "warning") && (
+                            <button
+                              type="button"
+                              onClick={focusProtocolEditor}
+                              style={{
+                                marginTop: "8px",
+                                padding: "4px 10px",
+                                border: "1px solid #91caff",
+                                borderRadius: "4px",
+                                background: "#e6f4ff",
+                                color: "#0958d9",
+                                cursor: "pointer",
+                                fontSize: "12px",
+                              }}
+                            >
+                              跳转到协议编辑处
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {jsonlParseErrors.length > 0 && (
                   <div
                     style={{
