@@ -9,7 +9,7 @@
       {
         "id": "text-component",
         "component": {
-          "Button": {
+          "Text": {
             "text": {
               "literalString": "Hello, A2UI222222!"
             }
