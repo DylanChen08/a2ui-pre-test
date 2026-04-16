@@ -88,7 +88,14 @@ export function App() {
     if (!childrenConfig) return [];
     if (Array.isArray(childrenConfig.explicitList)) {
       return childrenConfig.explicitList
-        .map((id: string) => resolveChild(id))
+        .map((id: string, idx: number) => {
+          const node = resolveChild(id);
+          if (!node) return null;
+          if (React.isValidElement(node)) {
+            return React.cloneElement(node as React.ReactElement, { key: `${id}-${idx}` });
+          }
+          return node;
+        })
         .filter(Boolean);
     }
     if (childrenConfig.template?.componentId && childrenConfig.template?.dataBinding) {

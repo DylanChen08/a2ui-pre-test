@@ -155,7 +155,8 @@
                 "left-title",
                 "left-button",
                 "left-divider",
-                "left-note"
+                "left-note",
+                "left-nested-column-l1"
               ]
             },
             "distribution": "start",
@@ -212,6 +213,93 @@
               "literalString": "Nested Level: root > row > card > column > text"
             },
             "usageHint": "caption"
+          }
+        }
+      },
+      {
+        "id": "left-nested-column-l1",
+        "component": {
+          "Column": {
+            "children": {
+              "explicitList": [
+                "left-nested-title-l1",
+                "left-nested-column-l2"
+              ]
+            },
+            "distribution": "start",
+            "alignment": "start"
+          }
+        }
+      },
+      {
+        "id": "left-nested-title-l1",
+        "component": {
+          "Text": {
+            "text": {
+              "literalString": "Nested Column L1"
+            },
+            "usageHint": "caption"
+          }
+        }
+      },
+      {
+        "id": "left-nested-column-l2",
+        "component": {
+          "Column": {
+            "children": {
+              "explicitList": [
+                "left-nested-title-l2",
+                "left-nested-column-l3"
+              ]
+            },
+            "distribution": "start",
+            "alignment": "start"
+          }
+        }
+      },
+      {
+        "id": "left-nested-title-l2",
+        "component": {
+          "Text": {
+            "text": {
+              "literalString": "Nested Column L2"
+            },
+            "usageHint": "caption"
+          }
+        }
+      },
+      {
+        "id": "left-nested-column-l3",
+        "component": {
+          "Column": {
+            "children": {
+              "explicitList": [
+                "left-nested-leaf-1",
+                "left-nested-leaf-2"
+              ]
+            },
+            "distribution": "start",
+            "alignment": "start"
+          }
+        }
+      },
+      {
+        "id": "left-nested-leaf-1",
+        "component": {
+          "Text": {
+            "text": {
+              "literalString": "Nested Column Leaf 1"
+            }
+          }
+        }
+      },
+      {
+        "id": "left-nested-leaf-2",
+        "component": {
+          "Text": {
+            "text": {
+              "literalString": "Nested Column Leaf 2"
+            }
           }
         }
       },
