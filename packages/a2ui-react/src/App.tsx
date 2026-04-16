@@ -7,6 +7,7 @@ import {
   type ComponentTree,
 } from "a2ui-core";
 import simpleTextProtocol from "../../a2ui-core/src/mock/simple-text.json";
+import columnThreeTextProtocol from "../../a2ui-core/src/mock/column-three-text.json";
 
 type LiteralValue =
   | { literalString?: string; literalNumber?: number; literalBoolean?: boolean; literalArray?: unknown[]; path?: string }
@@ -17,6 +18,13 @@ function getByPath(source: any, path?: string) {
   if (!path || path === "/") return source;
   const parts = path.split("/").filter(Boolean);
   return parts.reduce((acc, part) => (acc == null ? undefined : acc[part]), source);
+}
+
+function protocolToJsonl(protocol: any): string {
+  return [
+    JSON.stringify({ beginRendering: protocol?.beginRendering ?? {} }),
+    JSON.stringify({ surfaceUpdate: protocol?.surfaceUpdate ?? {} }),
+  ].join("\n");
 }
 
 export function App() {
@@ -35,6 +43,15 @@ export function App() {
   const runtimeStateRef = useRef<any>(null);
   const activeTabMapRef = useRef<Record<string, number>>({});
   const modalOpenMapRef = useRef<Record<string, boolean>>({});
+
+  const sceneProtocolMap = useMemo<Record<string, any>>(
+    () => ({
+      "simple-text": simpleTextProtocol,
+      "row-column": columnThreeTextProtocol,
+    }),
+    []
+  );
+  const selectedProtocol = sceneProtocolMap[selectedScene] ?? simpleTextProtocol;
 
   useEffect(() => {
     runtimeStateRef.current = storeState;
@@ -149,11 +166,63 @@ export function App() {
       },
       Row: (props: any) => {
         const children = resolveChildren(props?.children);
-        return <div style={{ display: "flex", flexDirection: "row", justifyContent: "flex-start", alignItems: "center", gap: 10 }}>{children}</div>;
+        const justifyContentMap: Record<string, React.CSSProperties["justifyContent"]> = {
+          start: "flex-start",
+          center: "center",
+          end: "flex-end",
+          spaceBetween: "space-between",
+          spaceAround: "space-around",
+          spaceEvenly: "space-evenly",
+        };
+        const alignItemsMap: Record<string, React.CSSProperties["alignItems"]> = {
+          start: "flex-start",
+          center: "center",
+          end: "flex-end",
+          stretch: "stretch",
+        };
+        return (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              justifyContent: justifyContentMap[props?.distribution] ?? "flex-start",
+              alignItems: alignItemsMap[props?.alignment] ?? "center",
+              gap: 10,
+            }}
+          >
+            {children}
+          </div>
+        );
       },
       Column: (props: any) => {
         const children = resolveChildren(props?.children);
-        return <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start", alignItems: "stretch", gap: 10 }}>{children}</div>;
+        const justifyContentMap: Record<string, React.CSSProperties["justifyContent"]> = {
+          start: "flex-start",
+          center: "center",
+          end: "flex-end",
+          spaceBetween: "space-between",
+          spaceAround: "space-around",
+          spaceEvenly: "space-evenly",
+        };
+        const alignItemsMap: Record<string, React.CSSProperties["alignItems"]> = {
+          start: "flex-start",
+          center: "center",
+          end: "flex-end",
+          stretch: "stretch",
+        };
+        return (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: justifyContentMap[props?.distribution] ?? "flex-start",
+              alignItems: alignItemsMap[props?.alignment] ?? "stretch",
+              gap: 10,
+            }}
+          >
+            {children}
+          </div>
+        );
       },
       List: (props: any) => {
         const children = resolveChildren(props?.children);
@@ -310,14 +379,7 @@ export function App() {
     []
   );
 
-  const defaultJsonl = useMemo(
-    () =>
-      [
-        JSON.stringify({ beginRendering: simpleTextProtocol.beginRendering }),
-        JSON.stringify({ surfaceUpdate: simpleTextProtocol.surfaceUpdate }),
-      ].join("\n"),
-    []
-  );
+  const defaultJsonl = useMemo(() => protocolToJsonl(selectedProtocol), [selectedProtocol]);
   const [jsonlInput, setJsonlInput] = useState<string>("");
   const [componentTreePreview, setComponentTreePreview] = useState<ComponentTree | null>(null);
   const [jsonlParseErrors, setJsonlParseErrors] = useState<Array<{ line: number; message: string }>>(
@@ -353,12 +415,12 @@ export function App() {
     // 设置store到a2uiParser
     a2uiParser.setStore(newStore);
     
-    // 解析simple-text.json数据
-    if (simpleTextProtocol.beginRendering) {
-      a2uiParser.parseMessage({ beginRendering: simpleTextProtocol.beginRendering });
+    // 解析当前选中场景对应的 mock 数据
+    if (selectedProtocol.beginRendering) {
+      a2uiParser.parseMessage({ beginRendering: selectedProtocol.beginRendering });
     }
-    if (simpleTextProtocol.surfaceUpdate) {
-      a2uiParser.parseMessage({ surfaceUpdate: simpleTextProtocol.surfaceUpdate });
+    if (selectedProtocol.surfaceUpdate) {
+      a2uiParser.parseMessage({ surfaceUpdate: selectedProtocol.surfaceUpdate });
     }
     
     // 获取初始状态
@@ -376,10 +438,13 @@ export function App() {
     return () => {
       unsubscribe();
     };
-  }, [renderMap]);
+  }, [renderMap, selectedProtocol]);
 
   const activeSurface = storeState ? (Object.values(storeState.surfaceMap ?? {})[0] as any) : null;
-  const previewVNode = activeSurface?.rootNode?._vnode ?? null;
+  const previewVNode =
+    (componentTreePreview as any)?.children?.[0] ??
+    activeSurface?.rootNode?._vnode ??
+    null;
 
   // 滚动到最新消息
   useEffect(() => {
@@ -471,12 +536,20 @@ export function App() {
     const scene = e.target.value;
     setSelectedScene(scene);
     
-    // 模拟加载场景数据
+    const protocol = sceneProtocolMap[scene] ?? simpleTextProtocol;
+    const currentStore = storeRef.current;
+    if (!currentStore) return;
+
     setIsLoading(true);
-    setTimeout(() => {
-      // 这里可以根据选择的场景加载对应的mock数据
-      setIsLoading(false);
-    }, 500);
+    a2uiParser.setStore(currentStore);
+    if (protocol.beginRendering) {
+      a2uiParser.parseMessage({ beginRendering: protocol.beginRendering });
+    }
+    if (protocol.surfaceUpdate) {
+      a2uiParser.parseMessage({ surfaceUpdate: protocol.surfaceUpdate });
+    }
+    setJsonlInput(protocolToJsonl(protocol));
+    setIsLoading(false);
   };
 
   // 处理本地模拟流
@@ -1026,7 +1099,7 @@ export function App() {
                   whiteSpace: 'pre-wrap',
                   fontSize: '12px'
                 }}>
-                  {JSON.stringify(simpleTextProtocol, null, 2)}
+                  {JSON.stringify(selectedProtocol, null, 2)}
                 </pre>
               </div>
               <div style={{ marginBottom: '24px' }}>

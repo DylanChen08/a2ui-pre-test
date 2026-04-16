@@ -2,8 +2,8 @@ import { expect } from 'chai';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import React from 'react';
-import { a2uiParser, A2UIMessage, RenderMap, RenderFunction } from '../src/parser';
-import { createA2uiStore, ErrorType } from '../src/store';
+import { a2uiParser, A2UIMessage, RenderMap, RenderFunction } from '../parser/index.ts';
+import { createA2uiStore, ErrorType } from '../store/index.ts';
 
 describe('A2UIParser', () => {
   let parserStore: ReturnType<typeof createA2uiStore>;

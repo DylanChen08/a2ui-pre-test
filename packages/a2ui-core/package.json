@@ -15,8 +15,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
-    "test": "npx mocha --require ts-node/register src/store/__tests__/store.test.ts",
-    "test:parser": "npx mocha --require ts-node/register src/parser/__tests__/parser.test.ts"
+    "test": "npx mocha --require ts-node/register src/tests/store.test.ts",
+    "test:parser": "npx mocha --require ts-node/register src/tests/parser.test.ts",
+    "test:treebuilder": "npx mocha --require ts-node/register src/tests/treebuilder.test.ts"
   },
   "dependencies": {
     "zustand": "^5.0.12"

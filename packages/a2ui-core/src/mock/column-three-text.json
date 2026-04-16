@@ -1,0 +1,58 @@
+{
+  "beginRendering": {
+    "surfaceId": "surface-001",
+    "root": "column-component"
+  },
+  "surfaceUpdate": {
+    "surfaceId": "surface-001",
+    "components": [
+      {
+        "id": "column-component",
+        "component": {
+          "Column": {
+            "children": {
+              "explicitList": [
+                "text-component-1",
+                "text-component-2",
+                "text-component-3"
+              ]
+            },
+            "distribution": "start",
+            "alignment": "start"
+          }
+        }
+      },
+      {
+        "id": "text-component-1",
+        "component": {
+          "Text": {
+            "text": {
+              "literalString": "Hello, A2UI!"
+            },
+            "usageHint": "h3"
+          }
+        }
+      },
+      {
+        "id": "text-component-2",
+        "component": {
+          "Text": {
+            "text": {
+              "literalString": "This is the second line."
+            }
+          }
+        }
+      },
+      {
+        "id": "text-component-3",
+        "component": {
+          "Text": {
+            "text": {
+              "literalString": "This is the third line."
+            }
+          }
+        }
+      }
+    ]
+  }
+}
