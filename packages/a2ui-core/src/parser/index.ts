@@ -6,6 +6,7 @@ import {
   type RenderFunction,
   type RenderMap,
 } from '../store/index';
+import React from 'react';
 import { StoreApi } from 'zustand/vanilla';
 import { buildComponentTree, type ComponentTree } from '../treebuilder/index';
 
@@ -261,7 +262,8 @@ class A2UIParser {
     if (registered) {
       clearRendererErrors();
       const props = { ...componentData[componentType], id: componentId };
-      const vnode = renderFunction(props);
+      const rendered = renderFunction(props);
+      const vnode = this.attachComponentIdToRoot(rendered, componentId);
 
       const hydrateNode = state.getHydrateNode(componentId);
       if (hydrateNode) {
@@ -293,6 +295,28 @@ class A2UIParser {
       },
     });
     return null;
+  }
+
+  private attachComponentIdToRoot(vnode: any, componentId: string): any {
+    if (!React.isValidElement(vnode)) {
+      return vnode;
+    }
+
+    const existingProps = (vnode.props ?? {}) as Record<string, any>;
+    const nextProps: Record<string, any> = {};
+
+    if (existingProps.id === undefined) {
+      nextProps.id = componentId;
+    }
+    if (existingProps['data-a2ui-id'] === undefined) {
+      nextProps['data-a2ui-id'] = componentId;
+    }
+
+    if (Object.keys(nextProps).length === 0) {
+      return vnode;
+    }
+
+    return React.cloneElement(vnode, nextProps);
   }
   
   parseJSONL(jsonl: string): A2UIMessage[] {

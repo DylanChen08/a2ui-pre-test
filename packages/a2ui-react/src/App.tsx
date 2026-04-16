@@ -8,6 +8,7 @@ import {
 } from "a2ui-core";
 import simpleTextProtocol from "../../a2ui-core/src/mock/simple-text.json";
 import columnThreeTextProtocol from "../../a2ui-core/src/mock/column-three-text.json";
+import complexNestedTreeProtocol from "../../a2ui-core/src/mock/complex-nested-tree.json";
 
 type LiteralValue =
   | { literalString?: string; literalNumber?: number; literalBoolean?: boolean; literalArray?: unknown[]; path?: string }
@@ -48,6 +49,7 @@ export function App() {
     () => ({
       "simple-text": simpleTextProtocol,
       "row-column": columnThreeTextProtocol,
+      "complex-tree": complexNestedTreeProtocol,
     }),
     []
   );
@@ -393,7 +395,7 @@ export function App() {
   // 场景列表
   const scenes = [
     { value: "simple-text", label: "Simple Text" },
-    { value: "complex-tree", label: "Complex Nested Tree" },
+    { value: "complex-tree", label: "Complex Nested Tree (Deep)" },
     { value: "row-column", label: "Row and Column Mixed" },
     { value: "card-demo", label: "Card Demo" },
     { value: "data-binding", label: "Data binding" },
@@ -442,8 +444,8 @@ export function App() {
 
   const activeSurface = storeState ? (Object.values(storeState.surfaceMap ?? {})[0] as any) : null;
   const previewVNode =
-    (componentTreePreview as any)?.children?.[0] ??
     activeSurface?.rootNode?._vnode ??
+    (componentTreePreview as any)?.children?.[0] ??
     null;
 
   // 滚动到最新消息
@@ -917,7 +919,9 @@ export function App() {
             boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
             width: '800px',
             maxHeight: '600px',
-            overflow: 'auto'
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column'
           }}>
             <div style={{ 
               padding: '16px',
@@ -939,7 +943,7 @@ export function App() {
                 ×
               </button>
             </div>
-            <div style={{ padding: '24px' }}>
+            <div style={{ padding: '24px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
               {storeState && (
                 <div>
                   <div style={{ marginBottom: '16px' }}>
@@ -999,7 +1003,9 @@ export function App() {
             boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
             width: '600px',
             maxHeight: '600px',
-            overflow: 'auto'
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column'
           }}>
             <div style={{ 
               padding: '16px',
@@ -1021,7 +1027,7 @@ export function App() {
                 ×
               </button>
             </div>
-            <div style={{ padding: '24px' }}>
+            <div style={{ padding: '24px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
               {storeState && Object.keys(storeState.errorMap ?? {}).length > 0 ? (
                 <pre
                   style={{
@@ -1065,7 +1071,9 @@ export function App() {
             boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
             width: '800px',
             maxHeight: '600px',
-            overflow: 'auto'
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column'
           }}>
             <div style={{ 
               padding: '16px',
@@ -1087,7 +1095,7 @@ export function App() {
                 ×
               </button>
             </div>
-            <div style={{ padding: '24px' }}>
+            <div style={{ padding: '24px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
               <div style={{ marginBottom: '24px' }}>
                 <h3 style={{ margin: 0, fontSize: '14px', marginBottom: '8px' }}>模型返回（完整）</h3>
                 <pre style={{ 
