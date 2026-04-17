@@ -954,7 +954,7 @@ export function App() {
               {storeState && (
                 <div>
                   <div style={{ marginBottom: '16px' }}>
-                    <h3 style={{ margin: 0, fontSize: '14px' }}>组件总数：{storeState.surfaces ? Object.keys(storeState.surfaces).length : 0}</h3>
+                    <h3 style={{ margin: 0, fontSize: '14px' }}>组件总数：{Object.keys(storeState.hydrateNodeMap ?? {}).length}</h3>
                   </div>
                   <div style={{ marginBottom: '16px' }}>
                     <h3 style={{ margin: 0, fontSize: '14px', marginBottom: '8px' }}>数据模型</h3>
