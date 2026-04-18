@@ -9,6 +9,10 @@ import {
 import simpleTextProtocol from "../../a2ui-core/src/mock/simple-text.json";
 import columnThreeTextProtocol from "../../a2ui-core/src/mock/column-three-text.json";
 import complexNestedTreeProtocol from "../../a2ui-core/src/mock/complex-nested-tree.json";
+import {
+  complexNestedTreeJsonlArray,
+  complexNestedTreeJsonlText,
+} from "../../a2ui-core/src/mock/complex-nested-tree-jsonl-array";
 
 type LiteralValue =
   | { literalString?: string; literalNumber?: number; literalBoolean?: boolean; literalArray?: unknown[]; path?: string }
@@ -29,6 +33,7 @@ function protocolToJsonl(protocol: any): string {
 }
 
 export function App() {
+  const STREAM_DEBUG = true;
   const [store, setStore] = useState<any>(null);
   const [storeState, setStoreState] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -44,6 +49,12 @@ export function App() {
   const runtimeStateRef = useRef<any>(null);
   const activeTabMapRef = useRef<Record<string, number>>({});
   const modalOpenMapRef = useRef<Record<string, boolean>>({});
+  const missingChildLoggedRef = useRef<Set<string>>(new Set());
+
+  const streamDebugLog = (...args: any[]) => {
+    if (!STREAM_DEBUG) return;
+    console.log("[A2UI-STREAM]", ...args);
+  };
 
   const sceneProtocolMap = useMemo<Record<string, any>>(
     () => ({
@@ -55,15 +66,10 @@ export function App() {
   );
   const selectedProtocol = sceneProtocolMap[selectedScene] ?? simpleTextProtocol;
 
-  useEffect(() => {
-    runtimeStateRef.current = storeState;
-  }, [storeState]);
-  useEffect(() => {
-    activeTabMapRef.current = activeTabMap;
-  }, [activeTabMap]);
-  useEffect(() => {
-    modalOpenMapRef.current = modalOpenMap;
-  }, [modalOpenMap]);
+  // 与本轮 render 的 store / UI 状态同步；避免仅用 useEffect 写入 ref 导致解析子树时慢一帧（本地流高频推送时尤为明显）。
+  runtimeStateRef.current = storeState;
+  activeTabMapRef.current = activeTabMap;
+  modalOpenMapRef.current = modalOpenMap;
 
   const resolveValue = (value: LiteralValue, surfaceId?: string): any => {
     if (!value) return undefined;
@@ -84,17 +90,30 @@ export function App() {
   const resolveChild = (componentId?: string) =>
     runtimeStateRef.current?.hydrateNodeMap?.[componentId ?? ""]?._vnode ?? null;
 
+  const RenderNodeById = ({ componentId }: { componentId?: string }) => {
+    const node = resolveChild(componentId);
+    return React.isValidElement(node) ? (node as React.ReactElement) : null;
+  };
+
   const resolveChildren = (childrenConfig: any) => {
     if (!childrenConfig) return [];
     if (Array.isArray(childrenConfig.explicitList)) {
       return childrenConfig.explicitList
         .map((id: string, idx: number) => {
           const node = resolveChild(id);
-          if (!node) return null;
-          if (React.isValidElement(node)) {
-            return React.cloneElement(node as React.ReactElement, { key: `${id}-${idx}` });
+          if (!node) {
+            if (!missingChildLoggedRef.current.has(id)) {
+              streamDebugLog("child unresolved yet", { id, idx });
+              missingChildLoggedRef.current.add(id);
+            }
+          } else if (React.isValidElement(node)) {
+            missingChildLoggedRef.current.delete(id);
+          } else {
+            streamDebugLog("child is non-element and skipped", { id, node });
           }
-          return node;
+          // 关键：即使当前子节点尚未到达，也保留一个按 id 动态解析的占位渲染点；
+          // 后续该 id 的消息到达后，React 重渲染时即可自动补齐。
+          return <RenderNodeById key={`${id}-${idx}`} componentId={id} />;
         })
         .filter(Boolean);
     }
@@ -106,12 +125,9 @@ export function App() {
         childrenConfig.template.dataBinding
       );
       const keys = dataMap && typeof dataMap === "object" ? Object.keys(dataMap) : [];
-      const templateNode = resolveChild(templateId);
-      return keys.map((key) =>
-        React.isValidElement(templateNode)
-          ? React.cloneElement(templateNode as React.ReactElement, { key: `${templateId}-${key}` })
-          : templateNode
-      );
+      return keys.map((key) => (
+        <RenderNodeById key={`${templateId}-${key}`} componentId={templateId} />
+      ));
     }
     return [];
   };
@@ -240,7 +256,7 @@ export function App() {
       },
       Card: (props: any) => (
         <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 12, backgroundColor: "#fff", boxShadow: "0 1px 6px rgba(0,0,0,0.06)" }}>
-          {resolveChild(props?.child)}
+          <RenderNodeById componentId={props?.child} />
         </div>
       ),
       Tabs: (props: any) => {
@@ -264,7 +280,7 @@ export function App() {
                 );
               })}
             </div>
-            <div style={{ padding: 12 }}>{resolveChild(activeItem?.child)}</div>
+            <div style={{ padding: 12 }}><RenderNodeById componentId={activeItem?.child} /></div>
           </div>
         );
       },
@@ -279,7 +295,7 @@ export function App() {
         return (
           <div style={{ position: "relative" }}>
             <div onClick={() => setModalOpenMap((prev) => ({ ...prev, [props?.id]: true }))} style={{ display: "inline-block", cursor: "pointer" }}>
-              {resolveChild(props?.entryPointChild)}
+              <RenderNodeById componentId={props?.entryPointChild} />
             </div>
             {open ? (
               <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}>
@@ -287,7 +303,7 @@ export function App() {
                   <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
                     <button onClick={() => setModalOpenMap((prev) => ({ ...prev, [props?.id]: false }))}>关闭</button>
                   </div>
-                  {resolveChild(props?.contentChild)}
+                  <RenderNodeById componentId={props?.contentChild} />
                 </div>
               </div>
             ) : null}
@@ -317,7 +333,7 @@ export function App() {
             color: props?.primary ? "#fff" : "#222",
           }}
         >
-          {resolveChild(props?.child) ?? "按钮"}
+          <RenderNodeById componentId={props?.child} />
         </button>
       ),
       CheckBox: (props: any) => {
@@ -440,6 +456,11 @@ export function App() {
     // 订阅store的变化
     const unsubscribe = newStore.subscribe(() => {
       const s = newStore.getState();
+      streamDebugLog("zustand subscribe triggered", {
+        surfaces: Object.keys(s.surfaceMap ?? {}).length,
+        hydrateNodes: Object.keys(s.hydrateNodeMap ?? {}).length,
+        errors: Object.keys(s.errorMap ?? {}).length,
+      });
       setStoreState(s);
       setComponentTreePreview(buildComponentTree(s as any));
     });
@@ -450,10 +471,23 @@ export function App() {
   }, [renderMap, selectedProtocol]);
 
   const activeSurface = storeState ? (Object.values(storeState.surfaceMap ?? {})[0] as any) : null;
-  const previewVNode =
-    activeSurface?.rootNode?._vnode ??
-    (componentTreePreview as any)?.children?.[0] ??
-    null;
+  const activeRootComponentId = activeSurface?.rootNode?.componentId as string | undefined;
+  const previewVNode = activeRootComponentId
+    ? (storeState?.hydrateNodeMap?.[activeRootComponentId]?._vnode ?? null)
+    : null;
+  /** hydrate 节点数变化时轮换 key，避免复用同一 root element 导致子树不随流式到达而更新 */
+  const hydratePreviewKey = Object.keys(storeState?.hydrateNodeMap ?? {}).length;
+
+  useEffect(() => {
+    if (!STREAM_DEBUG || !storeState) return;
+    streamDebugLog("store snapshot", {
+      surfaces: Object.keys(storeState.surfaceMap ?? {}).length,
+      hydrateNodes: Object.keys(storeState.hydrateNodeMap ?? {}).length,
+      activeRootComponentId,
+      hasPreviewVNode: !!previewVNode,
+      previewVNodeType: React.isValidElement(previewVNode) ? (previewVNode as any).type : typeof previewVNode,
+    });
+  }, [STREAM_DEBUG, storeState, activeRootComponentId, previewVNode]);
 
   // 滚动到最新消息
   useEffect(() => {
@@ -563,11 +597,72 @@ export function App() {
 
   // 处理本地模拟流
   const handleLocalStream = () => {
+    const currentStore = storeRef.current;
+    if (!currentStore) return;
+
     setIsLoading(true);
-    setTimeout(() => {
-      // 模拟加载本地流数据
-      setIsLoading(false);
-    }, 500);
+    a2uiParser.setStore(currentStore);
+    setJsonlInput(complexNestedTreeJsonlText);
+
+    // 清空当前 store，确保本次流式回放结果可复现、可观察。
+    const state = currentStore.getState();
+    Object.keys(state.hydrateNodeMap ?? {}).forEach((id) => state.removeHydrateNode(id));
+    Object.keys(state.surfaceMap ?? {}).forEach((id) => state.removeSurface(id));
+    Object.keys(state.errorMap ?? {}).forEach((id) => state.removeError(id));
+
+    const parseErrors: Array<{ line: number; message: string }> = [];
+    let pushedCount = 0;
+    let currentIndex = 0;
+    missingChildLoggedRef.current.clear();
+    streamDebugLog("local stream start", { totalMessages: complexNestedTreeJsonlArray.length });
+
+    const pushOneMessage = () => {
+      if (currentIndex >= complexNestedTreeJsonlArray.length) {
+        streamDebugLog("local stream finished", { pushedCount, parseErrors });
+        setJsonlParseErrors(parseErrors);
+        setComponentTreePreview(buildComponentTree(currentStore.getState() as any));
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-${Date.now()}`,
+            type: "assistant",
+            content:
+              parseErrors.length === 0
+                ? `本地流已逐条推送完成：共 ${pushedCount} 条 JSONL，全部由 parser 处理成功。`
+                : `本地流已逐条推送：成功 ${pushedCount} 条，失败 ${parseErrors.length} 条。`,
+            status: "completed",
+          },
+        ]);
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const message = complexNestedTreeJsonlArray[currentIndex];
+        streamDebugLog("parse message", {
+          index: currentIndex + 1,
+          type: message.beginRendering
+            ? "beginRendering"
+            : message.surfaceUpdate
+              ? `surfaceUpdate:${message.surfaceUpdate.components?.[0]?.id ?? "unknown"}`
+              : "unknown",
+        });
+        a2uiParser.parseMessage(message);
+        pushedCount += 1;
+      } catch (error) {
+        streamDebugLog("parse error", { index: currentIndex + 1, error });
+        parseErrors.push({
+          line: currentIndex + 1,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      currentIndex += 1;
+      requestAnimationFrame(pushOneMessage);
+    };
+
+    // 逐帧下发，确保每条消息处理后都有机会触发一次可见渲染。
+    requestAnimationFrame(pushOneMessage);
   };
 
   // 处理键盘事件
@@ -874,7 +969,7 @@ export function App() {
                     }}
                   >
                     {previewVNode ? (
-                      <div>{previewVNode as React.ReactNode}</div>
+                      <div key={hydratePreviewKey}>{previewVNode as React.ReactNode}</div>
                     ) : (
                       <span style={{ color: '#999', fontSize: '12px' }}>
                         当前 root 节点没有可渲染内容（请检查协议 root 是否命中组件，且 renderMap 已实现对应组件类型）
