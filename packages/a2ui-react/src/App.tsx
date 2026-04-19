@@ -1,9 +1,12 @@
-import React, { useEffect, useState, useRef, useMemo } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useState, useRef, useMemo } from "react";
 // 导入真实的init方法和相关功能
 import {
   init,
   a2uiParser,
   buildComponentTree,
+  A2UIJsonlStreamBuffer,
+  simulateJsonlStream,
+  type A2UIMessage,
   type ComponentTree,
 } from "a2ui-core";
 import simpleTextProtocol from "../../a2ui-core/src/mock/simple-text.json";
@@ -32,6 +35,74 @@ function protocolToJsonl(protocol: any): string {
   ].join("\n");
 }
 
+/** 流式遮罩淡出（0.3s）；结束时由 onFadeComplete 清除 hydrateHasMounted 标记 */
+function HydrateStreamFadeShell({
+  componentId,
+  children,
+  getHydratePending,
+  onFadeComplete,
+}: {
+  componentId: string;
+  children: React.ReactNode;
+  getHydratePending: (id: string) => boolean;
+  onFadeComplete: (id: string) => void;
+}) {
+  const settledRef = useRef(false);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const pending = getHydratePending(componentId);
+
+  useLayoutEffect(() => {
+    settledRef.current = false;
+  }, [componentId]);
+
+  useLayoutEffect(() => {
+    if (!pending) return;
+    const el = overlayRef.current;
+    if (!el) return;
+    const frame = requestAnimationFrame(() => {
+      el.style.opacity = "0";
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pending, componentId]);
+
+  const onTransitionEnd = (e: React.TransitionEvent<HTMLDivElement>) => {
+    if (e.propertyName !== "opacity") return;
+    if (settledRef.current) return;
+    settledRef.current = true;
+    onFadeComplete(componentId);
+  };
+
+  if (!pending) {
+    return <>{children}</>;
+  }
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        display: "inline-block",
+        maxWidth: "100%",
+        verticalAlign: "top",
+        boxSizing: "border-box",
+      }}
+    >
+      {children}
+      <div
+        ref={overlayRef}
+        onTransitionEnd={onTransitionEnd}
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          backgroundColor: "rgba(255,255,255,0.42)",
+          opacity: 1,
+          transition: "opacity 0.3s ease-out",
+        }}
+      />
+    </div>
+  );
+}
+
 export function App() {
   const STREAM_DEBUG = true;
   const [store, setStore] = useState<any>(null);
@@ -50,6 +121,12 @@ export function App() {
   const activeTabMapRef = useRef<Record<string, number>>({});
   const modalOpenMapRef = useRef<Record<string, boolean>>({});
   const missingChildLoggedRef = useRef<Set<string>>(new Set());
+  const storeRef = useRef<any>(null);
+  const streamCancelRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => streamCancelRef.current?.();
+  }, []);
 
   const streamDebugLog = (...args: any[]) => {
     if (!STREAM_DEBUG) return;
@@ -132,8 +209,32 @@ export function App() {
     return [];
   };
 
-  const renderMap = useMemo(
-    () => ({
+  const getStreamHydratePending = useCallback(
+    (cid: string) =>
+      runtimeStateRef.current?.hydrateNodeMap?.[cid]?.hydrateHasMounted === false,
+    []
+  );
+
+  const completeStreamHydrateFade = useCallback((cid: string) => {
+    storeRef.current?.getState()?.setHydrateHasMounted?.(cid, true);
+  }, []);
+
+  const renderMap = useMemo(() => {
+    const fadeWrap = (props: any, node: React.ReactNode) => {
+      const id = props?.id;
+      if (id == null || id === "") return node;
+      return (
+        <HydrateStreamFadeShell
+          componentId={String(id)}
+          getHydratePending={getStreamHydratePending}
+          onFadeComplete={completeStreamHydrateFade}
+        >
+          {node}
+        </HydrateStreamFadeShell>
+      );
+    };
+
+    return {
       Text: (props: any) => {
         const surfaceId = resolveSurfaceIdByComponent(props?.id);
         const content = resolveValue(props?.text, surfaceId) ?? "";
@@ -147,14 +248,20 @@ export function App() {
           caption: { fontSize: "12px", color: "#666" },
           body: { fontSize: "14px" },
         };
-        return <span style={{ display: "inline-block", lineHeight: 1.6, ...(styleMap[usageHint] ?? styleMap.body) }}>{String(content)}</span>;
+        return fadeWrap(
+          props,
+          <span style={{ display: "inline-block", lineHeight: 1.6, ...(styleMap[usageHint] ?? styleMap.body) }}>
+            {String(content)}
+          </span>
+        );
       },
       Image: (props: any) => {
         const surfaceId = resolveSurfaceIdByComponent(props?.id);
         const src = resolveValue(props?.url, surfaceId) ?? "";
         const sizeMap: Record<string, number> = { icon: 20, avatar: 48, smallFeature: 120, mediumFeature: 220, largeFeature: 320 };
         const base = sizeMap[props?.usageHint] ?? 180;
-        return (
+        return fadeWrap(
+          props,
           <img
             src={String(src)}
             alt={props?.id ?? "a2ui-image"}
@@ -171,18 +278,24 @@ export function App() {
       Icon: (props: any) => {
         const surfaceId = resolveSurfaceIdByComponent(props?.id);
         const name = resolveValue(props?.name, surfaceId) ?? "help";
-        return <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, padding: "2px 6px", border: "1px solid #ddd", borderRadius: 4 }}>{String(name)}</span>;
+        return fadeWrap(
+          props,
+          <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, padding: "2px 6px", border: "1px solid #ddd", borderRadius: 4 }}>
+            {String(name)}
+          </span>
+        );
       },
       Video: (props: any) => {
         const surfaceId = resolveSurfaceIdByComponent(props?.id);
         const src = resolveValue(props?.url, surfaceId) ?? "";
-        return <video controls src={String(src)} style={{ width: "100%", maxWidth: 420, borderRadius: 8 }} />;
+        return fadeWrap(props, <video controls src={String(src)} style={{ width: "100%", maxWidth: 420, borderRadius: 8 }} />);
       },
       AudioPlayer: (props: any) => {
         const surfaceId = resolveSurfaceIdByComponent(props?.id);
         const src = resolveValue(props?.url, surfaceId) ?? "";
         const description = resolveValue(props?.description, surfaceId);
-        return (
+        return fadeWrap(
+          props,
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {description ? <span style={{ fontSize: 13 }}>{String(description)}</span> : null}
             <audio controls src={String(src)} />
@@ -205,7 +318,8 @@ export function App() {
           end: "flex-end",
           stretch: "stretch",
         };
-        return (
+        return fadeWrap(
+          props,
           <div
             style={{
               display: "flex",
@@ -235,7 +349,8 @@ export function App() {
           end: "flex-end",
           stretch: "stretch",
         };
-        return (
+        return fadeWrap(
+          props,
           <div
             style={{
               display: "flex",
@@ -252,18 +367,24 @@ export function App() {
       List: (props: any) => {
         const children = resolveChildren(props?.children);
         const isHorizontal = props?.direction === "horizontal";
-        return <div style={{ display: "flex", flexDirection: isHorizontal ? "row" : "column", gap: 10 }}>{children}</div>;
+        return fadeWrap(
+          props,
+          <div style={{ display: "flex", flexDirection: isHorizontal ? "row" : "column", gap: 10 }}>{children}</div>
+        );
       },
-      Card: (props: any) => (
-        <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 12, backgroundColor: "#fff", boxShadow: "0 1px 6px rgba(0,0,0,0.06)" }}>
-          <RenderNodeById componentId={props?.child} />
-        </div>
-      ),
+      Card: (props: any) =>
+        fadeWrap(
+          props,
+          <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 12, backgroundColor: "#fff", boxShadow: "0 1px 6px rgba(0,0,0,0.06)" }}>
+            <RenderNodeById componentId={props?.child} />
+          </div>
+        ),
       Tabs: (props: any) => {
         const tabItems = Array.isArray(props?.tabItems) ? props.tabItems : [];
         const activeIdx = activeTabMapRef.current[props?.id] ?? 0;
         const activeItem = tabItems[activeIdx];
-        return (
+        return fadeWrap(
+          props,
           <div style={{ border: "1px solid #ececec", borderRadius: 8 }}>
             <div style={{ display: "flex", borderBottom: "1px solid #ececec" }}>
               {tabItems.map((tab: any, idx: number) => {
@@ -280,19 +401,25 @@ export function App() {
                 );
               })}
             </div>
-            <div style={{ padding: 12 }}><RenderNodeById componentId={activeItem?.child} /></div>
+            <div style={{ padding: 12 }}>
+              <RenderNodeById componentId={activeItem?.child} />
+            </div>
           </div>
         );
       },
       Divider: (props: any) =>
-        props?.axis === "vertical" ? (
-          <div style={{ width: 1, height: 24, backgroundColor: "#ddd" }} />
-        ) : (
-          <div style={{ width: "100%", height: 1, backgroundColor: "#ddd" }} />
+        fadeWrap(
+          props,
+          props?.axis === "vertical" ? (
+            <div style={{ width: 1, height: 24, backgroundColor: "#ddd" }} />
+          ) : (
+            <div style={{ width: "100%", height: 1, backgroundColor: "#ddd" }} />
+          )
         ),
       Modal: (props: any) => {
         const open = !!modalOpenMapRef.current[props?.id];
-        return (
+        return fadeWrap(
+          props,
           <div style={{ position: "relative" }}>
             <div onClick={() => setModalOpenMap((prev) => ({ ...prev, [props?.id]: true }))} style={{ display: "inline-block", cursor: "pointer" }}>
               <RenderNodeById componentId={props?.entryPointChild} />
@@ -310,37 +437,40 @@ export function App() {
           </div>
         );
       },
-      Button: (props: any) => (
-        <button
-          onClick={() => {
-            if (!props?.action?.name) return;
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: `action-${Date.now()}`,
-                type: "assistant",
-                content: `触发 action: ${props.action.name}`,
-                status: "completed",
-              },
-            ]);
-          }}
-          style={{
-            border: "none",
-            borderRadius: 6,
-            padding: "8px 12px",
-            cursor: "pointer",
-            backgroundColor: props?.primary ? "#1677ff" : "#efefef",
-            color: props?.primary ? "#fff" : "#222",
-          }}
-        >
-          <RenderNodeById componentId={props?.child} />
-        </button>
-      ),
+      Button: (props: any) =>
+        fadeWrap(
+          props,
+          <button
+            onClick={() => {
+              if (!props?.action?.name) return;
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: `action-${Date.now()}`,
+                  type: "assistant",
+                  content: `触发 action: ${props.action.name}`,
+                  status: "completed",
+                },
+              ]);
+            }}
+            style={{
+              border: "none",
+              borderRadius: 6,
+              padding: "8px 12px",
+              cursor: "pointer",
+              backgroundColor: props?.primary ? "#1677ff" : "#efefef",
+              color: props?.primary ? "#fff" : "#222",
+            }}
+          >
+            <RenderNodeById componentId={props?.child} />
+          </button>
+        ),
       CheckBox: (props: any) => {
         const surfaceId = resolveSurfaceIdByComponent(props?.id);
         const label = resolveValue(props?.label, surfaceId) ?? "";
         const checked = !!resolveValue(props?.value, surfaceId);
-        return (
+        return fadeWrap(
+          props,
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={checked} readOnly />
             <span>{String(label)}</span>
@@ -358,7 +488,8 @@ export function App() {
           shortText: "text",
           obscured: "password",
         };
-        return (
+        return fadeWrap(
+          props,
           <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <span style={{ fontSize: 12, color: "#666" }}>{String(label)}</span>
             <input type={inputTypeMap[props?.textFieldType] ?? "text"} value={String(value)} readOnly style={{ border: "1px solid #d9d9d9", borderRadius: 6, padding: "8px 10px" }} />
@@ -369,14 +500,18 @@ export function App() {
         const surfaceId = resolveSurfaceIdByComponent(props?.id);
         const value = resolveValue(props?.value, surfaceId) ?? "";
         const inputType = props?.enableDate && props?.enableTime ? "datetime-local" : props?.enableDate ? "date" : "time";
-        return <input type={inputType} value={String(value)} readOnly style={{ border: "1px solid #d9d9d9", borderRadius: 6, padding: "8px 10px" }} />;
+        return fadeWrap(
+          props,
+          <input type={inputType} value={String(value)} readOnly style={{ border: "1px solid #d9d9d9", borderRadius: 6, padding: "8px 10px" }} />
+        );
       },
       MultipleChoice: (props: any) => {
         const surfaceId = resolveSurfaceIdByComponent(props?.id);
         const selected = new Set((resolveValue(props?.selections, surfaceId) ?? []) as string[]);
         const options = Array.isArray(props?.options) ? props.options : [];
         const chips = props?.variant === "chips";
-        return (
+        return fadeWrap(
+          props,
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {options.map((opt: any, idx: number) => {
               const label = resolveValue(opt?.label, surfaceId) ?? opt?.value ?? `Option ${idx + 1}`;
@@ -398,11 +533,13 @@ export function App() {
       Slider: (props: any) => {
         const surfaceId = resolveSurfaceIdByComponent(props?.id);
         const value = Number(resolveValue(props?.value, surfaceId) ?? 0);
-        return <input type="range" min={props?.minValue ?? 0} max={props?.maxValue ?? 100} value={value} readOnly />;
+        return fadeWrap(
+          props,
+          <input type="range" min={props?.minValue ?? 0} max={props?.maxValue ?? 100} value={value} readOnly />
+        );
       },
-    }),
-    []
-  );
+    };
+  }, [getStreamHydratePending, completeStreamHydrateFade]);
 
   const defaultJsonl = useMemo(() => protocolToJsonl(selectedProtocol), [selectedProtocol]);
   const [jsonlInput, setJsonlInput] = useState<string>("");
@@ -413,7 +550,6 @@ export function App() {
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const storeRef = useRef<any>(null);
 
   // 场景列表
   const scenes = [
@@ -595,10 +731,12 @@ export function App() {
     setIsLoading(false);
   };
 
-  // 处理本地模拟流
+  // 处理本地模拟流：每 50ms 推送 50 字符，经 JSONL 缓冲拆行并规范化后交给 parser
   const handleLocalStream = () => {
     const currentStore = storeRef.current;
     if (!currentStore) return;
+
+    streamCancelRef.current?.();
 
     setIsLoading(true);
     a2uiParser.setStore(currentStore);
@@ -612,57 +750,82 @@ export function App() {
 
     const parseErrors: Array<{ line: number; message: string }> = [];
     let pushedCount = 0;
-    let currentIndex = 0;
     missingChildLoggedRef.current.clear();
-    streamDebugLog("local stream start", { totalMessages: complexNestedTreeJsonlArray.length });
+    streamDebugLog("local stream start", {
+      totalChars: complexNestedTreeJsonlText.length,
+      expectedMessages: complexNestedTreeJsonlArray.length,
+    });
 
-    const pushOneMessage = () => {
-      if (currentIndex >= complexNestedTreeJsonlArray.length) {
-        streamDebugLog("local stream finished", { pushedCount, parseErrors });
-        setJsonlParseErrors(parseErrors);
-        setComponentTreePreview(buildComponentTree(currentStore.getState() as any));
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `msg-${Date.now()}`,
-            type: "assistant",
-            content:
-              parseErrors.length === 0
-                ? `本地流已逐条推送完成：共 ${pushedCount} 条 JSONL，全部由 parser 处理成功。`
-                : `本地流已逐条推送：成功 ${pushedCount} 条，失败 ${parseErrors.length} 条。`,
-            status: "completed",
-          },
-        ]);
-        setIsLoading(false);
-        return;
-      }
+    const buffer = new A2UIJsonlStreamBuffer();
 
-      try {
-        const message = complexNestedTreeJsonlArray[currentIndex];
-        streamDebugLog("parse message", {
-          index: currentIndex + 1,
-          type: message.beginRendering
-            ? "beginRendering"
-            : message.surfaceUpdate
-              ? `surfaceUpdate:${message.surfaceUpdate.components?.[0]?.id ?? "unknown"}`
-              : "unknown",
-        });
-        a2uiParser.parseMessage(message);
-        pushedCount += 1;
-      } catch (error) {
-        streamDebugLog("parse error", { index: currentIndex + 1, error });
+    const flushMalformed = (items: Array<{ fragment: string; message: string }>) => {
+      for (const item of items) {
         parseErrors.push({
-          line: currentIndex + 1,
-          message: error instanceof Error ? error.message : String(error),
+          line: 0,
+          message: `JSONL 片段解析失败: ${item.message}`,
         });
       }
-
-      currentIndex += 1;
-      requestAnimationFrame(pushOneMessage);
     };
 
-    // 逐帧下发，确保每条消息处理后都有机会触发一次可见渲染。
-    requestAnimationFrame(pushOneMessage);
+    const finishStream = () => {
+      streamDebugLog("local stream finished", { pushedCount, parseErrors: parseErrors.length });
+      setJsonlParseErrors(parseErrors);
+      setComponentTreePreview(buildComponentTree(currentStore.getState() as any));
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `msg-${Date.now()}`,
+          type: "assistant",
+          content:
+            parseErrors.length === 0
+              ? `本地流已完成：模拟 ${complexNestedTreeJsonlText.length} 字符流式输入（50 字符 / 50ms），共解析并应用 ${pushedCount} 条消息。`
+              : `本地流结束：已应用 ${pushedCount} 条消息，解析错误 ${parseErrors.length} 条。`,
+          status: "completed",
+        },
+      ]);
+      setIsLoading(false);
+      streamCancelRef.current = null;
+    };
+
+    const parseAndCount = (messages: A2UIMessage[]) => {
+      for (const message of messages) {
+        try {
+          streamDebugLog("parse message", {
+            type: message.beginRendering
+              ? "beginRendering"
+              : message.surfaceUpdate
+                ? `surfaceUpdate:${message.surfaceUpdate.components?.[0]?.id ?? "unknown"}`
+                : "other",
+          });
+          a2uiParser.parseMessage(message);
+          pushedCount += 1;
+        } catch (error) {
+          streamDebugLog("parse error", { error });
+          parseErrors.push({
+            line: 0,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    };
+
+    streamCancelRef.current = simulateJsonlStream(
+      complexNestedTreeJsonlText,
+      (chunk, streamState) => {
+        buffer.append(chunk);
+        const consumed = buffer.consume();
+        flushMalformed(consumed.malformedLines);
+        parseAndCount(consumed.messages);
+
+        if (streamState.done) {
+          const fin = buffer.finalize();
+          flushMalformed(fin.malformedLines);
+          parseAndCount(fin.messages);
+          finishStream();
+        }
+      },
+      { chunkSize: 50, intervalMs: 50 }
+    );
   };
 
   // 处理键盘事件

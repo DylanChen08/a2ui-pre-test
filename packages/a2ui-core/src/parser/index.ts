@@ -60,7 +60,7 @@ export type A2UIMessage = A2UIProtocol;
 
 export type { RenderFunction, RenderMap };
 
-interface ParserResult {
+export interface ParserResult {
   surface?: Surface;
   hydrateNodes?: HydrateNode[];
   dataModelUpdate?: DataModelUpdate;
@@ -90,17 +90,24 @@ class A2UIParser {
   }
   
   parseMessage(message: A2UIMessage): ParserResult {
+    let result: ParserResult;
+
     if (message.beginRendering) {
-      return this.parseBeginRendering(message.beginRendering);
+      result = this.parseBeginRendering(message.beginRendering);
     } else if (message.surfaceUpdate) {
-      return this.parseSurfaceUpdate(message.surfaceUpdate);
+      result = this.parseSurfaceUpdate(message.surfaceUpdate);
     } else if (message.dataModelUpdate) {
-      return this.parseDataModelUpdate(message.dataModelUpdate);
+      result = this.parseDataModelUpdate(message.dataModelUpdate);
     } else if (message.deleteSurface) {
-      return this.parseDeleteSurface(message.deleteSurface);
+      result = this.parseDeleteSurface(message.deleteSurface);
     } else {
       throw new Error('Invalid A2UI message: no action specified');
     }
+
+    const hooks = this.store.getState().parseLifecycleHooks;
+    hooks?.onAfterParseMessage?.(message, result);
+
+    return result;
   }
   
   parseBeginRendering(beginRendering: BeginRendering): ParserResult {
@@ -115,7 +122,8 @@ class A2UIParser {
         componentId: root,
         _vnode: null,
         ownerSurfaceId: surfaceId,
-        protocal: JSON.stringify(beginRendering)
+        protocal: JSON.stringify(beginRendering),
+        hydrateHasMounted: false,
       };
       // 添加到store
       this.store.getState().addHydrateNode(rootNode);
@@ -152,7 +160,8 @@ class A2UIParser {
         componentId: id,
         _vnode,
         ownerSurfaceId: surfaceId,
-        protocal: JSON.stringify(component)
+        protocal: JSON.stringify(component),
+        hydrateHasMounted: false,
       };
       
       // 添加到store
