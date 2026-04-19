@@ -1,0 +1,9 @@
+node_modules
+dist
+.pnpm
+.pnpm-store
+*.tar.gz
+*.tgz
+*.zip
+a2ui-full-source.tar.gz
+a2ui-full-source.zip

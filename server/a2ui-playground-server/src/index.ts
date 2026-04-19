@@ -1,26 +1,31 @@
-import Koa from "koa";
-import Router from "koa-router";
+import path from 'path';
+import { config as loadEnv } from 'dotenv';
+import Koa from 'koa';
+
+loadEnv({ path: path.resolve(__dirname, '../.env') });
+import bodyParser from 'koa-bodyparser';
+import cors from 'koa-cors';
+import { createAgentRouter } from './routes/agent';
+import { createChatRouter } from './routes/chat';
 
 const app = new Koa();
-const router = new Router();
 
-router.get("/health", (ctx) => {
-  ctx.body = { ok: true };
+const corsOrigin = process.env.CORS_ORIGIN;
+app.use(
+  cors({
+    origin: corsOrigin || '*'
+  })
+);
+app.use(bodyParser());
+
+const agentRouter = createAgentRouter();
+const chatRouter = createChatRouter();
+app.use(agentRouter.routes());
+app.use(agentRouter.allowedMethods());
+app.use(chatRouter.routes());
+app.use(chatRouter.allowedMethods());
+
+const PORT = Number(process.env.PORT || 3847);
+app.listen(PORT, () => {
+  console.log(`a2ui-playground-server listening on http://localhost:${PORT}`);
 });
-
-// 架构占位：后续在这里接入 a2ui agent / 协议生成与缓存
-router.post("/api/a2ui/generate", async (ctx) => {
-  void ctx;
-  ctx.status = 501;
-  ctx.body = { error: "Not implemented (scaffold only)" };
-});
-
-app.use(router.routes());
-app.use(router.allowedMethods());
-
-const port = Number(process.env.PORT ?? 8787);
-app.listen(port, () => {
-  // eslint-disable-next-line no-console
-  console.log(`[a2ui-playground-server] listening on http://localhost:${port}`);
-});
-

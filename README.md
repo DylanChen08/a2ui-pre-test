@@ -1,71 +1,46 @@
-# A2UI Playground（架构脚手架）
+## 项目介绍
+实现一个A2UI-playground, 用户通过web应用生成对应的UI界面
 
-本仓库是一个 TypeScript **monorepo** 脚手架，用于搭建 A2UI Playground 的整体工程结构（不包含具体业务细节实现）。
+## 项目架构
+项目使用monorepo组织代码
+包含以下几个核心模块
 
-## 目录结构
+packages
+- a2ui-core: 包含UI组件库和渲染引擎,包含以下模块：
+    - parser用来解析a2ui协议
+    - vnode，用来映射管理a2ui协议生成的组件
+    - treebuilder，用来根据a2ui协议生成调用a2ui渲染器，并生成最终的渲染树
 
-- `packages/`
-  - `a2ui-core/`：A2UI 协议解析与渲染树构建相关核心能力（parser / vnode / treebuilder）
-  - `a2ui-react/`：基于 React 的 A2UI 协议渲染引擎
-- `web/`
-  - `a2ui-playground/`：Playground Web 应用（Vite）
-- `server/`
-  - `a2ui-playground-server/`：Playground Server（Koa + ts-node），用于协议生成/缓存与 Agent 编排（占位）
+- a2ui-react: 基于react的a2ui协议渲染引擎
 
-## 环境要求
+package主要职责： 维护a2ui 相关的sdk, 并支持支持生产对应的npm包
 
-- Node.js：建议 **18+ / 20+**
-- npm：建议 **9+**
 
-## 安装依赖
+web
+- a2ui-playground: 包含A2UI-playground的web应用
 
-在仓库根目录执行：
+主要职责及详细功能
+1. 可以通过对话的方式，让AI Agent生成对应的UI界面
+2. 可以预览对应的AI界面
+3. 可以支持多轮对话对生成的UI进行调整
+4. 可以预览a2ui-react 定义的基础a2ui组件
+5. 可以支持协议调试
 
-```bash
-npm install
-```
 
-## 启动（开发模式）
+server
+- a2ui-playground-server: 包含A2UI-playground的server端应用
 
-### 仅启动 Web（Vite）
+1. 基于openAI, 实现a2ui agent
+2. 实现a2ui-server，支持a2ui协议的生成及缓存
 
-```bash
-npm run dev:web
-```
 
-### 仅启动 Server（Koa + ts-node）
+### 基础依赖
+所有的项目需要支持typescript
 
-```bash
-npm run dev:server
-```
+web: 使用vite构建playground
+server: 
+- 使用koa实现服务接口
+- agent基于openAI建链
+- 使用ts-node运行
 
-### 同时启动 Web + Server
-
-```bash
-npm run dev
-```
-
-> 说明：当前 `dev` 脚本会并行启动两个进程（一个 server、一个 web）。
-
-## 构建 / 类型检查
-
-```bash
-# 全部 workspace 一起构建（脚手架阶段可能仅做占位）
-npm run build
-
-# 全部 workspace 一起做类型检查
-npm run typecheck
-```
-
-## 环境变量（占位）
-
-如需后续接入 OpenAI/LLM，请在 `server/a2ui-playground-server` 侧准备环境变量（具体使用与链路实现不在本脚手架范围内）：
-
-- `OPENAI_API_KEY`：OpenAI API Key（可选，占位）
-- `OPENAI_BASE_URL`：自定义网关/代理（可选，占位）
-
-## 常见问题
-
-- **Q: 这是完整功能实现吗？**  
-  A: 不是。本仓库目标是“先把项目架构搭好”，各模块仅保留最小可运行/可扩展的骨架与接口形状。
 

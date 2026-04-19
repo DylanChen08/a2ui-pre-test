@@ -1,18 +1,16 @@
 {
-  "name": "a2ui-pre-test",
+  "name": "a2ui-full",
+  "version": "1.0.0",
+  "description": "A2UI - AI to UI playground",
   "private": true,
-  "workspaces": [
-    "packages/*",
-    "web/*",
-    "server/*"
-  ],
   "scripts": {
-    "dev:web": "npm -w packages/a2ui-react run dev",
-    "dev:server": "npm -w server/a2ui-playground-server run dev",
-    "dev": "npm run dev:server & npm run dev:web",
-    "build": "npm --workspaces run build",
-    "typecheck": "npm --workspaces run typecheck",
-    "lint": "npm --workspaces run lint"
+    "dev:web": "pnpm -F a2ui-playground dev",
+    "dev:server": "pnpm -F a2ui-playground-server dev",
+    "build": "pnpm -F a2ui-core -F a2ui-react build && pnpm -F a2ui-playground-server build && pnpm -F a2ui-playground build",
+    "pack:src": "bash scripts/pack-source.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
   }
 }
-
