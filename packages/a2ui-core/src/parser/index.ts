@@ -163,9 +163,15 @@ export class JSONLBuffer {
       return true;
     }
 
-    // 检测是否是 surfaceUpdate 消息，尝试提取 surfaceId 和完整的组件
-    // 在流式模式下，即使整个 JSON 对象不完整，也可以提取完整的组件
-    if (trimmedBuffer.includes('"surfaceUpdate":')) {
+    // 仅当消息是“纯 surfaceUpdate”时，才做增量组件提取。
+    // 若同一条消息还包含 beginRendering/dataModelUpdate/deleteSurface，
+    // 必须等待整条 JSON 完整后整体解析，避免把伴随字段丢失。
+    if (
+      trimmedBuffer.includes('"surfaceUpdate":') &&
+      !trimmedBuffer.includes('"beginRendering":') &&
+      !trimmedBuffer.includes('"dataModelUpdate":') &&
+      !trimmedBuffer.includes('"deleteSurface":')
+    ) {
       return this.extractSurfaceIdAndComponents(trimmedBuffer);
     }
 
@@ -345,8 +351,14 @@ export class JSONLBuffer {
     try {
       const message = JSON.parse(line) as A2UIMessage;
       
-      // 如果是 surfaceUpdate 消息，需要拆分为独立的 component 消息
-      if (message.surfaceUpdate && message.surfaceUpdate.components) {
+      // 仅拆分“纯 surfaceUpdate”消息；混合消息必须保持原子性。
+      const surfaceUpdate = message.surfaceUpdate;
+      const isPureSurfaceUpdate =
+        !!surfaceUpdate &&
+        !message.beginRendering &&
+        !message.dataModelUpdate &&
+        !message.deleteSurface;
+      if (isPureSurfaceUpdate && surfaceUpdate.components) {
         const splitMessages = this.splitSurfaceUpdate(message);
         splitMessages.forEach((msg, index) => {
           this.messageCallback(msg);
@@ -546,6 +558,11 @@ export class A2UIParser {
     
     // 构建组件树并渲染
     if (rootComponentId && this.hydrateNodes.length > 0) {
+      // 流式拆包时，root 组件可能尚未到达；此时跳过本次渲染，等待后续增量
+      const hasRootNode = this.hydrateNodes.some((n) => n.componentId === rootComponentId);
+      if (!hasRootNode) {
+        return;
+      }
       const componentTree = this.treeBuild(this.hydrateNodes, rootComponentId);
       if (componentTree.rootVNode) {
         if (this.renderCallback) {
